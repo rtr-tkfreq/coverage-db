@@ -82,3 +82,46 @@ SELECT pg_catalog.setval('public.setting_options_uid_seq', 1, true);
 -- PostgreSQL database dump complete
 --
 
+--
+-- PostgreSQL database dump
+--
+
+-- Dumped from database version 13.5 (Debian 13.5-0+deb11u1)
+-- Dumped by pg_dump version 13.5 (Debian 13.5-0+deb11u1)
+
+SET statement_timeout = 0;
+SET lock_timeout = 0;
+SET idle_in_transaction_session_timeout = 0;
+SET client_encoding = 'UTF8';
+SET standard_conforming_strings = on;
+SELECT pg_catalog.set_config('search_path', '', false);
+SET check_function_bodies = false;
+SET xmloption = content;
+SET client_min_messages = warning;
+SET row_security = off;
+
+--
+-- Name: settings; Type: VIEW; Schema: api; Owner: postgres
+--
+
+CREATE VIEW api.settings AS
+ SELECT setting_options.uid,
+    setting_options.object,
+    setting_options.filter
+   FROM public.setting_options
+  WHERE (setting_options.uid = 1);
+
+
+ALTER TABLE api.settings OWNER TO postgres;
+
+--
+-- Name: TABLE settings; Type: ACL; Schema: api; Owner: postgres
+--
+
+GRANT SELECT ON TABLE api.settings TO web_anon;
+
+
+--
+-- PostgreSQL database dump complete
+--
+
