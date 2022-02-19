@@ -181,3 +181,9 @@ As an alternative you might follow https://qgis.org/en/site/forusers/alldownload
 install the latest version of QGIS.
 
 QGIS can be used to render tiles using 'Raster tools/Generate XYZ tiles'.
+
+    
+## License
+
+Copyright 2022 Rundfunk und Telekom Regulierungs-GmbH (RTR-GmbH). This source code is licensed under the Apache license found in the LICENSE.txt file. The documentation to the project is licensed under the CC BY 4.0 license.
+Trademarks and logos of RTR, TKK,  and PCK are not part of this license.    
