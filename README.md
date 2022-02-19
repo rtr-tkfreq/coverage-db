@@ -81,7 +81,6 @@ Restart the database
     grant usage on schema api to web_anon;
     create role authenticator noinherit login password 'samepasswordasinpostgrest';
     grant web_anon to authenticator;
-    grant select on atraster to web_anon;
 ```
 Change password accordingly.
 
@@ -103,8 +102,10 @@ Depending on processing performance of the machine, this import of approx. 5 GB 
     mkdir opendata
     cd opendata
     ~/git/coverage/scripts/import-opendata/import-statistic-austria.sh
-    # check result
+    # add add permission, add index and check result
     psql frq
+    grant select on atraster to web_anon;
+    CREATE INDEX idx_the_geom_3857_atraster ON public.atraster USING gist (public.st_transform(geom, 3857)) WHERE (geom IS NOT NULL);
     SELECT pg_size_pretty( pg_total_relation_size('atraster') );
     quit    
 ```
