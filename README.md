@@ -81,6 +81,7 @@ Restart the database
     grant usage on schema api to web_anon;
     create role authenticator noinherit login password 'samepasswordasinpostgrest';
     grant web_anon to authenticator;
+    grant select on atraster to web_anon;
 ```
 Change password accordingly.
 
