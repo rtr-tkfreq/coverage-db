@@ -140,7 +140,7 @@ The resulting raster table is approx. 2,4 GB.
     # tar xJf postgrest-<version>-<platform>.tar.xz
     wget https://github.com/PostgREST/postgrest/releases/download/v9.0.0/postgrest-v9.0.0-linux-static-x64.tar.xz
     tar xJf <file>
-    ln -s postgrest /usr/local/sbin
+    ln -s /opt/postrest/postgrest /usr/local/sbin
 ```
 #### Configure Postgrest
 ```bash
