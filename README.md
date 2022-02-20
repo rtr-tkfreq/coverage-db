@@ -101,7 +101,7 @@ Depending on processing performance of the machine, this import of approx. 5 GB 
     cd
     mkdir opendata
     cd opendata
-    ~/git/coverage/scripts/import-opendata/import-statistic-austria.sh
+    ~/git/coverage-db/scripts/import-opendata/import-statistic-austria.sh
     # add add permission, add index and check result
     psql frq
     grant select on atraster to web_anon;
