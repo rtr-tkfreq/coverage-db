@@ -115,15 +115,15 @@ The resulting raster table is approx. 2,4 GB.
 ```bash
     su postgres
     # import tileurl
-    psql frq < ~/git/coverage/postgresql/frq_tileurl.sql
+    psql frq < ~/git/coverage-db/postgresql/frq_tileurl.sql
     # import setting_options
-    psql frq < ~/git/coverage/postgresql/frq_setting_options.sql
+    psql frq < ~/git/coverage-db/postgresql/frq_setting_options.sql
     # import cov_mno scheme
-    psql frq < ~/git/coverage/postgresql/frq_cov_mno.sql
+    psql frq < ~/git/coverage-db/postgresql/frq_cov_mno.sql
     # import cov_visible_name
-    psql frq < ~/git/coverage/postgresql/frq_cov_visible_name.sql
+    psql frq < ~/git/coverage-db/postgresql/frq_cov_visible_name.sql
     # import function cov
-    psql frq < ~/git/coverage/postgresql/frq_fn_cov.sql
+    psql frq < ~/git/coverage-db/postgresql/frq_fn_cov.sql
     quit 
 ```
 
@@ -147,14 +147,14 @@ The resulting raster table is approx. 2,4 GB.
     cd /etc
     mkdir postgrest
     cd postgrest
-    cp ~postgres/git/coverage/postgrest/config .
+    cp ~postgres/git/coverage-db/postgrest/config .
 ```
 Edit config and replace dummy IP and password.
 
 ### Add systemd service
 ```bash
     cd /lib/systemd/system/
-    cp ~postgres/git/coverage/postgrest/postgrest.service .
+    cp ~postgres/git/coverage-db/postgrest/postgrest.service .
     systemctl daemon-reload
     systemctl start postgrest.service
     systemctl enable postgrest.service 
