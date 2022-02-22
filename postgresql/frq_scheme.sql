@@ -2,8 +2,8 @@
 -- PostgreSQL database dump
 --
 
--- Dumped from database version 13.3 (Debian 13.3-1.pgdg100+1)
--- Dumped by pg_dump version 13.3 (Debian 13.3-1.pgdg100+1)
+-- Dumped from database version 13.5 (Debian 13.5-0+deb11u1)
+-- Dumped by pg_dump version 13.5 (Debian 13.5-0+deb11u1)
 
 SET statement_timeout = 0;
 SET lock_timeout = 0;
@@ -56,6 +56,20 @@ COMMENT ON EXTENSION postgis IS 'PostGIS geometry and geography spatial types an
 
 
 --
+-- Name: postgis_raster; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS postgis_raster WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION postgis_raster; Type: COMMENT; Schema: -; Owner: 
+--
+
+COMMENT ON EXTENSION postgis_raster IS 'PostGIS raster types and functions';
+
+
+--
 -- Name: postgis_topology; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -70,10 +84,10 @@ COMMENT ON EXTENSION postgis_topology IS 'PostGIS topology spatial types and fun
 
 
 --
--- Name: cov(double precision, double precision); Type: FUNCTION; Schema: api; Owner: postgres
+-- Name: cov(double precision, double precision); Type: FUNCTION; Schema: api; Owner: qgis
 --
 
-CREATE FUNCTION api.cov(x double precision, y double precision) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
+CREATE FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
     LANGUAGE plpgsql
     AS $_$
 BEGIN
@@ -96,12 +110,52 @@ BEGIN
           left join public.cov_mno on public.cov_mno.raster=public.atraster.id
           left join public.cov_visible_name vn on vn.operator = public.cov_mno.operator
           where public.cov_mno.raster is not null AND
-                    ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint($1::FLOAT,$2::FLOAT),4326),3035)),public.atraster.geom);
+                    ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint($1::FLOAT,$2::FLOAT),4326),3035)),public.atraster.geom)
+          order by public.cov_mno.dl_max desc;
 END ;
 $_$;
 
 
-ALTER FUNCTION api.cov(x double precision, y double precision) OWNER TO postgres;
+ALTER FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision) OWNER TO qgis;
+
+--
+-- Name: cov(double precision, double precision, character varying, character varying); Type: FUNCTION; Schema: api; Owner: qgis
+--
+
+CREATE FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision, cov_operator character varying, cov_reference character varying) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+   return query
+   SELECT
+          coalesce(vn.visible_name, cov_mno.operator)::VARCHAR as operator,
+          public.cov_mno.reference::VARCHAR,
+          public.cov_mno.license::VARCHAR,
+          public.cov_mno.rfc_date::VARCHAR last_updated,
+          public.cov_mno.raster::VARCHAR,
+          NULL::VARCHAR,
+          round(public.cov_mno.dl_max /1000)::integer downloadKbitMax,
+          round(public.cov_mno.ul_max /1000)::integer uploadKbitMax,
+          round(public.cov_mno.dl_normal /1000)::integer downloadKbitNormal,
+          round(public.cov_mno.ul_normal/1000)::integer uploadKbitNormal,
+          ST_AsGeoJSON(ST_Transform(public.atraster.geom,4326)) geoJson,
+                  ST_X(ST_Centroid(ST_Transform(public.atraster.geom,4326))),
+          ST_Y(ST_Centroid(ST_Transform(public.atraster.geom,4326)))
+          from public.atraster
+          left join public.cov_mno on public.cov_mno.raster=public.atraster.id
+          left join public.cov_visible_name vn on vn.operator = public.cov_mno.operator
+          where public.cov_mno.raster is not null and
+                    -- For geodetic coordinates, X is longitude and Y is latitude
+                    ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint($1::FLOAT,$2::FLOAT),4326),3035)),public.atraster.geom)
+                    and coalesce(vn.visible_name, cov_mno.operator)::VARCHAR = cov_operator 
+                    and public.cov_mno.reference::VARCHAR = cov_reference
+          order by public.cov_mno.dl_max desc;
+                    
+END ;
+$_$;
+
+
+ALTER FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision, cov_operator character varying, cov_reference character varying) OWNER TO qgis;
 
 SET default_tablespace = '';
 
@@ -380,6 +434,14 @@ ALTER TABLE ONLY public.cov_visible_name
 
 
 --
+-- Name: cov_mno operator_reference_raster_rfc_date_id; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_mno
+    ADD CONSTRAINT operator_reference_raster_rfc_date_id UNIQUE (operator, reference, raster, rfc_date);
+
+
+--
 -- Name: atraster_geom_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -408,10 +470,32 @@ CREATE INDEX cov_visible_name_visible_name_idx ON public.cov_visible_name USING 
 
 
 --
+-- Name: idx_cov_mno_raster_dl_normal; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_cov_mno_raster_dl_normal ON public.cov_mno USING btree (raster, dl_normal);
+
+
+--
+-- Name: idx_the_geom_3857_atraster; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX idx_the_geom_3857_atraster ON public.atraster USING gist (public.st_transform(geom, 3857)) WHERE (geom IS NOT NULL);
+
+
+--
 -- Name: SCHEMA api; Type: ACL; Schema: -; Owner: postgres
 --
 
 GRANT USAGE ON SCHEMA api TO web_anon;
+GRANT ALL ON SCHEMA api TO qgis;
+
+
+--
+-- Name: TABLE setting_options; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.setting_options TO qgis;
 
 
 --
@@ -419,6 +503,13 @@ GRANT USAGE ON SCHEMA api TO web_anon;
 --
 
 GRANT SELECT ON TABLE api.settings TO web_anon;
+
+
+--
+-- Name: TABLE tileurl; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON TABLE public.tileurl TO qgis;
 
 
 --
@@ -432,6 +523,7 @@ GRANT SELECT ON TABLE api.tileurl TO web_anon;
 -- Name: TABLE atraster; Type: ACL; Schema: public; Owner: postgres
 --
 
+GRANT SELECT ON TABLE public.atraster TO qgis;
 GRANT SELECT ON TABLE public.atraster TO web_anon;
 
 
@@ -440,6 +532,7 @@ GRANT SELECT ON TABLE public.atraster TO web_anon;
 --
 
 GRANT SELECT ON TABLE public.cov_mno TO web_anon;
+GRANT ALL ON TABLE public.cov_mno TO qgis;
 
 
 --
@@ -447,6 +540,13 @@ GRANT SELECT ON TABLE public.cov_mno TO web_anon;
 --
 
 GRANT SELECT ON TABLE public.cov_visible_name TO web_anon;
+
+
+--
+-- Name: SEQUENCE tileurl_uid_seq; Type: ACL; Schema: public; Owner: postgres
+--
+
+GRANT ALL ON SEQUENCE public.tileurl_uid_seq TO qgis;
 
 
 --
