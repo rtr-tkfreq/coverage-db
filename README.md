@@ -114,6 +114,7 @@ The resulting raster table is approx. 2,4 GB.
 ### Import SQL
 ```bash
     su postgres
+    psql frq < ~/git/coverage-db/postgresql/frq_scheme.sql
     # import tileurl
     psql frq < ~/git/coverage-db/postgresql/frq_tileurl.sql
     # import setting_options
