@@ -123,8 +123,6 @@ The resulting raster table is approx. 2,4 GB.
     psql frq < ~/git/coverage-db/postgresql/frq_cov_mno.sql
     # import cov_visible_name
     psql frq < ~/git/coverage-db/postgresql/frq_cov_visible_name.sql
-    # import function cov
-    psql frq < ~/git/coverage-db/postgresql/frq_fn_cov.sql
     quit 
 ```
 
