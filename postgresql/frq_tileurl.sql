@@ -69,9 +69,9 @@ ALTER TABLE ONLY public.tileurl ALTER COLUMN uid SET DEFAULT nextval('public.til
 --
 
 COPY public.tileurl (uid, operator, reference, date, url) FROM stdin;
-1	A1TA	F7/16	2021-03-31	https://frq.rtr.at/cov/A1TA/F7_16/2021-03-31
-2	TMA	F7/16	2021-04-01	https://frq.rtr.at/cov/TMA/F7_16/2021-04-01
-3	H3A	F7/16	2021-05-05	https://frq.rtr.at/cov/H3A/F7_16/2021-05-05
+1	A1TA	F7/16	2021-03-31	/cov/A1TA/F7_16/2021-03-31
+2	TMA	F7/16	2021-04-01	/cov/TMA/F7_16/2021-04-01
+3	H3A	F7/16	2021-05-05	/cov/H3A/F7_16/2021-05-05
 \.
 
 
