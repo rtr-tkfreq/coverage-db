@@ -15,7 +15,7 @@ and/or newer flavors of Linux, but configuration might vary.
 ## GIT
 Install GIT
 ```bash
-    apt git
+    apt install git
 ```
 
 ## Postgresql
