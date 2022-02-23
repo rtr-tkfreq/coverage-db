@@ -40,7 +40,7 @@ Allow access for postgrest and qgis
 # allow access for postgrest
 host    frq     authenticator   <IP of postgrest>/32   md5
 # allow access for qgis
-host	frq		all		        <IP of qgis>/32		   md5
+host	frq		qgis	        <IP of qgis>/32		   md5
 
 ```
 Edit IP accordingly
@@ -171,6 +171,14 @@ The details of nginx configuration are site specific, the relevant fragment
 can be found under nginx/example.com.
 
 The file "dummy.png" is used when no tiles are available (e.g. outside boundaries).
+
+## Open Data from operators
+```bash
+   su postgres
+   cd git/coverage-db/scripts/import-opendata
+   ./cov_download_mno.sh
+   ./cov_import_all.sh    
+```
 
 ## QGIS
 Install QGIS
