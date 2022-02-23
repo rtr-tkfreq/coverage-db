@@ -8,7 +8,7 @@ ls -l /var/lib/postgresql/open/${DATE}/${1}.csv
 
 test -r /var/lib/postgresql/open/${DATE}/${1}.csv || exit
 
-echo "Import for {1}"
+echo "Import for ${1}"
 
 sql=$(cat <<EOF
 BEGIN;
