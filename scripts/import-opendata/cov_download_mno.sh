@@ -86,7 +86,7 @@ URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed
 URL_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdaten.csv
 
 # https://www.liwest.at/5g-fwa
-URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716.CSV
+URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716-20220310.CSV
 
 # https://citycom-austria.com/festnetz-versorgungsnetz/
 URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/GrazNewRadio_Versorgungskarte.csv
