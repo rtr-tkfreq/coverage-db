@@ -136,13 +136,15 @@ sed -i "s/,/;/g" F1_TMA.csv
 
 
 wget $F1_H3A -O F1_H3A.csv.raw
+# heasder: <FEFF>OPERATOR;REFERENCE;LICENSE;RFC_DATE;RASTER;DL_NORMAL;UL_NORMAL;DL_MAX;UL_MAX
+# data: H3A;F1/16;CCBY4.0;2022-04-22;100mN27774E45290;105668000;11520000;291957000;32085000
+cp F1_H3A.csv.raw F1_H3A.csv
+# wrong procedure identifier - should be F1/16 (not F7/16)- obsolete, fixed since 2022-04-22
+# sed "s/F7\/16/F1\/16/g" F1_H3A.csv.raw > F1_H3A.csv
+# wrong order of data fields - obsolete, fixed since 2022-04-22
 # header: <FEFF>OPERATOR;REFERENCE;LICENSE;RFC_DATE;RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX
-# data: H3A;F7/16;CCBY4.0;2021-12-27;100mN26636E45278;540000;1350000;60000;150000
-# wrong procedure identifier - should be F1/16 (not F7/16)
-sed "s/F7\/16/F1\/16/g" F1_H3A.csv.raw > F1_H3A.csv
-# wrong order of data fields 
-grep "RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX" F1_H3A.csv && \
-sed -i -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\8;\7;\9/g"  F1_H3A.csv
+# grep "RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX" F1_H3A.csv && \
+# sed -i -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\8;\7;\9/g"  F1_H3A.csv
 
 # F7/16
 
@@ -167,12 +169,12 @@ sed -i "s/,/;/g" F7_TMA.csv
 #
 
 wget $URL_H3A -O F7_H3A.csv.raw
-# header: <FEFF>OPERATOR;REFERENCE;LICENSE;RFC_DATE;RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX
-# data: H3A;F7/16;CCBY4.0;2021-12-21;100mN27808E45282;13452000;33633600;1200000;3003000
-# wrong order of data fields - workaround at db-import
-grep "RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX" F7_H3A.csv.raw && \
-sed -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\8;\7;\9/g" F7_H3A.csv.raw > F7_H3A.csv
-#
+# header: <FEFF>OPERATOR;REFERENCE;LICENSE;RFC_DATE;RASTER;DL_NORMAL;UL_NORMAL;DL_MAX;UL_MAX
+# data: H3A;F7/16;CCBY4.0;2022-04-22;100mN27793E45279;68492000;6116000;171225600;15288000
+cp F7_H3A.csv.raw  F7_H3A.csv
+# wrong order of data fields - workaround at db-import - obsolete, fixed since 20022-04-22
+# grep "RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX" F7_H3A.csv.raw && \
+# sed -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\8;\7;\9/g" F7_H3A.csv.raw > F7_H3A.csv
 
 wget $URL_LIWEST -O F7_LIWEST.csv.raw
 # header: <FEFF>operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
