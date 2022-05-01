@@ -188,7 +188,7 @@ Install QGIS
 As an alternative you might follow https://qgis.org/en/site/forusers/alldownloads.html and 
 install the latest version of QGIS.
 
-QGIS can be used to render tiles using 'Raster tools/Generate XYZ tiles'.
+QGIS can be used to render tiles using 'Raster tools/Generate XYZ tiles'. Make sure to use the EPSG:3857 reference system.
 
     
 ## License
