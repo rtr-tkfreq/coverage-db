@@ -57,8 +57,8 @@ export LANG=C
 
 # https://www.a1.net/versorgunsdaten-gemaess-auflagen
 # as zip
-F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
-
+# F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
+F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
 # 
 F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_21q4.csv
 
@@ -69,9 +69,10 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 # F7/16 (3,5 GHz data)
 
 # https://www.a1.net/versorgunsdaten-gemaess-auflagen
-(was: https://www.a1.net/5g-netzabdeckung-karte)
+# (was: https://www.a1.net/5g-netzabdeckung-karte)
 # 
-URL_A1TA=https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
+URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
+# https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
 
@@ -149,7 +150,10 @@ cp F1_H3A.csv.raw F1_H3A.csv
 # F7/16
 
 # download files
-wget $URL_A1TA -O F7_A1TA.csv.raw
+wget $URL_A1TA -O F7_A1TA.zip
+# unzip file
+unzip -p F7_A1TA.zip  > F7_A1TA.csv.raw
+rm F7_A1TA.zip
 # header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 # data:  <S<A1TA<T<;"F7/16<T<;<S<CCBY4.0<T>;2021-11-30;100mN28428E47592;461902200;82481876;475760000;84956463
 # remove all variants of typographic quotes
@@ -157,7 +161,6 @@ sed "s/\x93//g" F7_A1TA.csv.raw > F7_A1TA.csv
 sed -i "s/\x94//g" F7_A1TA.csv
 sed -i "s/\x22//g" F7_A1TA.csv
 #
-
 
 wget $URL_TMA -O F7_TMA.csv.raw
 # header "OPERATOR","REFERENCE","LICENSE","RFC_DATE","RASTER","DL_NORMAL","UL_NORMAL","DL_MAX","UL_MAX"
@@ -190,16 +193,14 @@ sed '/\;0\;0\;0\;0/d'  F7_HGRAZ.csv.raw > F7_HGRAZ.csv
 #
 
 wget $URL_SBG -O F7_SBG.csv.raw
-# header: <FEFF>operator;reference;lincense;rfc-date;rasterid;dl_normal;ul_normal;dl_max;ul_max
-# data: SBG;F7/16;CCBY4.0;20.10.2021;100mN27094E46042;12000000;1200000;20000000;2000000
+# header: operator,reference,lincense,rfc-date,rasterid,dl_normal,ul_normal,dl_max,ul_max
+# data SBG,F7/16,CCBY4.0,2022-04-07,100mN27480E45541,12000000,1200000,20000000,2000000
+
 # remove newline
 sed 's/\r//g' F7_SBG.csv.raw > F7_SBG.csv
-sed -i -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\7;\8;\9/g" F7_SBG.csv
-# remove trailing field
-sed -i -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*).*;/\1;\2;\3;\4;\5;\6;\7;\8;\9/g" F7_SBG.csv
-# fix date format - from 25.01.2022 to 2022-01-25
-sed -i -r "s/([^;]*);([^;]*);([0-9]*)\.([0-9]*)\.([0-9]*)(.*)/\1;\2;\5-\4-\3\6/g" F7_SBG.csv
-#
+# delimiter "," (should be ";")
+sed -i "s/,/;/g" F7_SBG.csv
+
 
 wget $URL_MASS -O F7_MASS.csv.raw
 # header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
