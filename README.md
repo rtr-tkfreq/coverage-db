@@ -116,6 +116,23 @@ Depending on processing performance of the machine, this import of approx. 5 GB 
 ```
 The resulting raster tables are approx. 3 GB.
 
+### Import RTR open data
+```bash
+    su postgres
+    cd
+    mkdir opendata
+    cd opendata
+    # import F1/16 appendix J1
+    ~/git/coverage-db/scripts/import-opendata/import-rtr-j1.sh
+    # add add permission, add index and check result
+    psql frq
+    grant select on rtr_j1 to web_anon;
+    CREATE INDEX idx_the_geom_3857_rtr_j1 ON public.rtr_j1 USING gist (public.st_transform(geom, 3857)) WHERE (geom IS NOT NULL);
+    SELECT pg_size_pretty( pg_total_relation_size('rtr_j1') );
+    quit    
+```
+The resulting rtr_j1 table are approx. 32 MB.
+
 ### Import SQL
 ```bash
     su postgres
