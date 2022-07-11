@@ -101,15 +101,20 @@ Depending on processing performance of the machine, this import of approx. 5 GB 
     cd
     mkdir opendata
     cd opendata
+    # import 100m raster
     ~/git/coverage-db/scripts/import-opendata/import-statistic-austria-100m.sh
+    # import 250m raster
     # add add permission, add index and check result
     psql frq
     grant select on atraster to web_anon;
+    grant select on atraster250 to web_anon; 
     CREATE INDEX idx_the_geom_3857_atraster ON public.atraster USING gist (public.st_transform(geom, 3857)) WHERE (geom IS NOT NULL);
     SELECT pg_size_pretty( pg_total_relation_size('atraster') );
+    CREATE INDEX idx_the_geom_3857_atraster250 ON public.atraster250 USING gist (public.st_transform(geom, 3857)) WHERE (geom IS NOT NULL);
+    SELECT pg_size_pretty( pg_total_relation_size('atraster250') );
     quit    
 ```
-The resulting raster table is approx. 2,4 GB.
+The resulting raster tables are approx. 3 GB.
 
 ### Import SQL
 ```bash
