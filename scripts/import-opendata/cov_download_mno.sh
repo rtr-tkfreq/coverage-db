@@ -55,13 +55,19 @@ export LANG=C
 
 # F1/16
 
+# A1TA
 # https://www.a1.net/versorgunsdaten-gemaess-auflagen
 # as zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
 F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
 # 
-F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_21q4.csv
+# TMA
+# https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
+F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q1.csv
+# F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_21q4.csv
 
+# H3A
+# 
 # https://www.drei.at/de/info/netzabdeckung/versorgungsdaten-700-mhz-1500-mhz-2100-mhz.html
 F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdaten-700-1500-2100.csv
 
@@ -77,7 +83,8 @@ URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.z
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
 
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
-URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_5g_21q4.csv
+URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q1.csv
+# URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_5g_21q4.csv
 # URL_TMA_NDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_AVG.csv
 # URL_TMA_MDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_MAX.csv
 # URL_TMA_NUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_AVG.csv
