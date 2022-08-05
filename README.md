@@ -199,7 +199,8 @@ The file "dummy.png" is used when no tiles are available (e.g. outside boundarie
    su postgres
    cd git/coverage-db/scripts/import-opendata
    ./cov_download_mno.sh
-   ./cov_import_all.sh    
+   ./cov_import_all.sh
+   ./cov_import_final_step.sh
 ```
 
 ## QGIS
