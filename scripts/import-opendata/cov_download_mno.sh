@@ -57,9 +57,11 @@ export LANG=C
 
 # A1TA
 # https://www.a1.net/versorgunsdaten-gemaess-auflagen
+# (sic!)
 # as zip
+F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
-F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
+# F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
 # 
 # TMA
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
@@ -78,7 +80,8 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 # https://www.a1.net/versorgunsdaten-gemaess-auflagen
 # (was: https://www.a1.net/5g-netzabdeckung-karte)
 # 
-URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
+URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
+# URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
@@ -104,7 +107,9 @@ URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/G
 
 
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air.html
-URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_5GHz.csv
+# https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air/maximalbandbreite.html
+URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_220715.zip
+# URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_5GHz.csv
 
 # https://www.massresponse.com/versorgungsdaten3-5ghz/
 URL_MASS=https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterdatenMASS.csv
@@ -202,7 +207,10 @@ wget $URL_HGRAZ -O F7_HGRAZ.csv.raw
 sed '/\;0\;0\;0\;0/d'  F7_HGRAZ.csv.raw > F7_HGRAZ.csv
 #
 
-wget $URL_SBG -O F7_SBG.csv.raw
+wget $URL_SBG -O F7_SBG.zip
+# unzip file
+unzip -p F7_SBG.zip  > F7_SBG.csv.raw
+rm F7_SBG.zip
 # header: operator,reference,lincense,rfc-date,rasterid,dl_normal,ul_normal,dl_max,ul_max
 # data SBG,F7/16,CCBY4.0,2022-04-07,100mN27480E45541,12000000,1200000,20000000,2000000
 
