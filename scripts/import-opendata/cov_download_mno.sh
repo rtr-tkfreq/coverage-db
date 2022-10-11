@@ -56,10 +56,12 @@ export LANG=C
 # F1/16
 
 # A1TA
-# https://www.a1.net/versorgunsdaten-gemaess-auflagen
-# (sic!)
+# https://www.a1.net/versorgungsdaten-gemaess-auflagen 
+# (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # as zip
-F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
+
+F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
+# F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
 # 
@@ -77,10 +79,12 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 
 # F7/16 (3,5 GHz data)
 
-# https://www.a1.net/versorgunsdaten-gemaess-auflagen
+# https://www.a1.net/versorgungsdaten-gemaess-auflagen
+# (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # (was: https://www.a1.net/5g-netzabdeckung-karte)
 # 
-URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
+URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
+# URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
 # URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
