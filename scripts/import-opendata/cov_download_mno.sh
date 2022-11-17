@@ -144,7 +144,8 @@ rm F1_A1TA.zip
 sed  "s/\x93//g" F1_A1TA.csv.raw > F1_A1TA.csv 
 sed -i "s/\x94//g" F1_A1TA.csv
 sed -i "s/\x22//g" F1_A1TA.csv
-
+# fix reference
+sed -i "s/F5\/22-2/F1\/16/g" F1_A1TA.csv
 
 wget $F1_TMA -O F1_TMA.csv.raw
 # header: "OPERATOR","REFERENCE","LICENSE","RFC_DATE","RASTER","DL_NORMAL","UL_NORMAL","DL_MAX","UL_MAX"
