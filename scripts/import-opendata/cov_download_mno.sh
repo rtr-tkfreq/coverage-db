@@ -199,7 +199,7 @@ cp F7_H3A.csv.raw  F7_H3A.csv
 # grep "RASTER;DL_NORMAL;DL_MAX;UL_NORMAL;UL_MAX" F7_H3A.csv.raw && \
 # sed -r "s/([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*);([^;]*)/\1;\2;\3;\4;\5;\6;\8;\7;\9/g" F7_H3A.csv.raw > F7_H3A.csv
 
-wget $URL_LIWEST -O F7_LIWEST.csv.raw
+wget $URL_LIWEST -O F7_LIWEST.csv.raw --no-check-certificate
 # header: <FEFF>operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 # data: LIWEST;F7/16;CCBY4.0;2020-11-29;100mN27838E46196;85000000;8000000;100000000;10000000
 cp F7_LIWEST.csv.raw F7_LIWEST.csv
