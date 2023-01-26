@@ -67,7 +67,8 @@ F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
 # 
 # TMA
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
-F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q2.csv
+F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q4.csv
+# F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q2.csv
 # F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q1.csv
 # F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_21q4.csv
 
@@ -91,7 +92,8 @@ URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
 
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
-URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q2.csv
+URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q4.csv
+# URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q2.csv
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q1.csv
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_5g_21q4.csv
 # URL_TMA_NDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_AVG.csv
@@ -104,7 +106,8 @@ URL_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohda
 
 # https://www.liwest.at/5g-fwa
 # URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716-20220310.CSV
-URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f71620220718.CSV
+# URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f71620220718.CSV
+URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716_20221108.CSV
 
 # https://citycom-austria.com/festnetz-versorgungsnetz/
 URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/GrazNewRadio_Versorgungskarte.csv
