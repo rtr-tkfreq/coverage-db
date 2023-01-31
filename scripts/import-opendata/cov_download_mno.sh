@@ -115,7 +115,9 @@ URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/G
 
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air.html
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air/maximalbandbreite.html
-URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_220715.zip
+
+URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_20230111.csv
+# URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_220715.zip
 # URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_5GHz.csv
 
 # https://www.massresponse.com/versorgungsdaten3-5ghz/
@@ -215,10 +217,13 @@ wget $URL_HGRAZ -O F7_HGRAZ.csv.raw
 sed '/\;0\;0\;0\;0/d'  F7_HGRAZ.csv.raw > F7_HGRAZ.csv
 #
 
-wget $URL_SBG -O F7_SBG.zip
+# variant zip download
+#wget $URL_SBG -O F7_SBG.zip
 # unzip file
-unzip -p F7_SBG.zip  > F7_SBG.csv.raw
-rm F7_SBG.zip
+#unzip -p F7_SBG.zip  > F7_SBG.csv.raw
+#rm F7_SBG.zip
+# variant csv download
+wget $URL_SBG -O F7_SBG.csv.raw
 # header: operator,reference,lincense,rfc-date,rasterid,dl_normal,ul_normal,dl_max,ul_max
 # data SBG,F7/16,CCBY4.0,2022-04-07,100mN27480E45541,12000000,1200000,20000000,2000000
 
