@@ -159,7 +159,8 @@ The resulting rtr_j1 table are approx. 32 MB.
     cd postgrest
     # download from https://github.com/PostgREST/postgrest/releases/latest
     # tar xJf postgrest-<version>-<platform>.tar.xz
-    wget https://github.com/PostgREST/postgrest/releases/download/v9.0.0/postgrest-v9.0.0-linux-static-x64.tar.xz
+    # e.g.:
+    wget https://github.com/PostgREST/postgrest/releases/download/v10.1.2/postgrest-v10.1.2-linux-static-x64.tar.xz
     tar xJf <file>
     ln -s /opt/postgrest/postgrest /usr/local/sbin
 ```
