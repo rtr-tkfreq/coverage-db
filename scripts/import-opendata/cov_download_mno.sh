@@ -81,7 +81,7 @@ TMP_TMA="$(mktemp /tmp/tma.XXXXXXXXXXXXXX)"
 curl -s $URL_TMA_REF 2>&1 > $TMP_TMA
 
 # get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
-URL_TMA=https://www.magenta.at/`grep -o -E "content/dam/magenta_at/csv/versorgungsdaten[^ ]*(CSV|csv)" $TMP_TMA`
+F1_TMA=https://www.magenta.at/`grep -o -E "content/dam/magenta_at/csv/versorgungsdaten[^ ]*(CSV|csv)" $TMP_TMA`
 
 # remove tmp file
 rm $TMP_TMA
