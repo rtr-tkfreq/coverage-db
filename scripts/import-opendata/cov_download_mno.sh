@@ -158,10 +158,23 @@ URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/G
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air.html
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air/maximalbandbreite.html
 
-
-URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_20230111.csv
+# URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_20230111.csv
 # URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_220715.zip
 # URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_5GHz.csv
+
+
+URL_SBG_REF=https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air/maximalbandbreite.html
+
+# create tmp file, eg /tmp/sbg.NtDA6N1XiNKFA9
+TMP_SBG="$(mktemp /tmp/sbg.XXXXXXXXXXXXXX)"
+# -s silent
+curl -s $URL_SBG_REF 2>&1 > $TMP_SBG
+
+# get URL
+URL_SBG=https://www.salzburg-ag.at/`grep -o -E "content/dam/web18/dokumente/cablelink/internet[^\>]*(CSV|csv)" $TMP_SBG`
+
+# remove tmp file
+rm $TMP_SBG
 
 # https://www.massresponse.com/versorgungsdaten3-5ghz/
 URL_MASS=https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterdatenMASS.csv
