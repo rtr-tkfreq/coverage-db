@@ -107,7 +107,19 @@ URL_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohda
 # https://www.liwest.at/5g-fwa
 # URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716-20220310.CSV
 # URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f71620220718.CSV
-URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716_20221108.CSV
+# URL_LIWEST=https://www.liwest.at/fileadmin/user_upload/5g/rtr_f716_20221108.CSV
+URL_LIWEST_REF=https://www.liwest.at/5g-fwa
+
+# create tmp file, eg /tmp/liwest.NtDA6N1XiNKFA9
+TMP_LIWEST="$(mktemp /tmp/liwest.XXXXXXXXXXXXXX)" 
+# -s silent
+curl -s $URL_LIWEST_REF 2>&1 > $TMP_LIWEST
+
+# get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
+URL_LIWEST=https://www.liwest.at/`grep -o -E "fileadmin[^\>]*(CSV|csv)" $TMP_LIWEST`
+
+# remove tmp file
+rm $TMP_LIWEST
 
 # https://citycom-austria.com/festnetz-versorgungsnetz/
 URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/GrazNewRadio_Versorgungskarte.csv
