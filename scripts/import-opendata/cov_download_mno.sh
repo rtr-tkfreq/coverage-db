@@ -60,6 +60,7 @@ export LANG=C
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # as zip
 
+# raw URL: https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip/b0bdc28c-2622-3df5-a1ec-65514e18b73d?t=1674052129463
 F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
@@ -67,10 +68,23 @@ F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
 # 
 # TMA
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
-F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q4.csv
+# F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_23Q1.csv
+# F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q4.csv
 # F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q2.csv
 # F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_22Q1.csv
 # F1_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_21q4.csv
+URL_TMA_REF=https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
+
+# create tmp file, eg /tmp/tma.NtDA6N1XiNKFA9
+TMP_TMA="$(mktemp /tmp/tma.XXXXXXXXXXXXXX)" 
+# -s silent
+curl -s $URL_TMA_REF 2>&1 > $TMP_TMA
+
+# get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
+URL_TMA=https://www.magenta.at/`grep -o -E "content/dam/magenta_at/csv/versorgungsdaten[^ ]*(CSV|csv)" $TMP_TMA`
+
+# remove tmp file
+rm $TMP_TMA
 
 # H3A
 # 
@@ -84,6 +98,7 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # (was: https://www.a1.net/5g-netzabdeckung-karte)
 # 
+# raw URL https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip/9d8a2f2d-123b-5da2-524c-23658f8a009a?t=1674052326911
 URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
 # URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
 # URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
@@ -92,7 +107,8 @@ URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
 
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
-URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q4.csv
+# URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_23Q1.csv
+# URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q4.csv
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q2.csv
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_22Q1.csv
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/speed_5g_21q4.csv
@@ -100,6 +116,20 @@ URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED
 # URL_TMA_MDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_MAX.csv
 # URL_TMA_NUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_AVG.csv
 # URL_TMA_MUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_MAX.csv
+
+
+URL_TMA_REF=https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
+
+# create tmp file, eg /tmp/tma.NtDA6N1XiNKFA9
+TMP_TMA="$(mktemp /tmp/tma.XXXXXXXXXXXXXX)" 
+# -s silent
+curl -s $URL_TMA_REF 2>&1 > $TMP_TMA
+
+# get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
+URL_TMA=https://www.magenta.at/`grep -o -E "content/dam/magenta_at/csv/versorgungsdaten[^ ]*(CSV|csv)" $TMP_TMA`
+
+# remove tmp file
+rm $TMP_TMA
 
 # https://www.drei.at/de/info/netzabdeckung/versorgungsdaten-35-ghz.html
 URL_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdaten.csv
@@ -127,6 +157,7 @@ URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/G
 
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air.html
 # https://www.salzburg-ag.at/internet-tv-telefon/fuer-privat/internet/cablelink-air/netzabdeckung-air/maximalbandbreite.html
+
 
 URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_20230111.csv
 # URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz_220715.zip
