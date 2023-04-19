@@ -15,7 +15,7 @@
 # * limitations under the License.
 # ******************************************************************************/
 
-# set -x
+set -x
 export LANG=C
 
 # Import open data mobile network/5G coverage information
@@ -56,15 +56,32 @@ export LANG=C
 # F1/16
 
 # A1TA
-# https://www.a1.net/versorgungsdaten-gemaess-auflagen 
+URL_A1TA_REF=https://www.a1.net/versorgungsdaten-gemaess-auflagen 
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # as zip
 
-# raw URL: https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip/b0bdc28c-2622-3df5-a1ec-65514e18b73d?t=1674052129463
-F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
+# F1_A1TA=https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.csv
+# was zip before
+# old raw URL: https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip/b0bdc28c-2622-3df5-a1ec-65514e18b73d?t=1674052129463
+# F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
 # F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
+
+
+# create tmp file, eg /tmp/a1ta.NtDA6N1XiNKFA9
+TMP_A1TA="$(mktemp /tmp/a1ta.XXXXXXXXXXXXXX)" 
+# -s silent
+curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
+
+# get URL, from fregment /A1_Speed_Final.csv
+F1_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final.csv"  $TMP_A1TA`
+
+echo $URL_A1TA
+
+# remove tmp file
+rm $TMP_A1TA
+
 # 
 # TMA
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020
@@ -94,17 +111,33 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 
 # F7/16 (3,5 GHz data)
 
-# https://www.a1.net/versorgungsdaten-gemaess-auflagen
+# URL_A1TA_REF=https://www.a1.net/versorgungsdaten-gemaess-auflagen
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # (was: https://www.a1.net/5g-netzabdeckung-karte)
-# 
-# raw URL https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip/9d8a2f2d-123b-5da2-524c-23658f8a009a?t=1674052326911
-URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
+
+# now again csv
+# URL_A1TA=https://cdn21.a1.net/documents/37417/1476215/A1_3500_Final.csv
+# was zip before
+# old raw URL https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip/9d8a2f2d-123b-5da2-524c-23658f8a009a?t=1674052326911
+# URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
 # URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
 # URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
+
+# create tmp file, eg /tmp/a1ta.NtDA6N1XiNKFA9
+TMP_A1TA="$(mktemp /tmp/a1ta.XXXXXXXXXXXXXX)" 
+# -s silent
+curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
+
+# get URL, from fregment /A1_Speed_Final.csv
+URL_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final.csv"  $TMP_A1TA`
+
+echo $URL_A1TA
+
+# remove tmp file
+rm TMP_A1TA
 
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_23Q1.csv
@@ -116,6 +149,8 @@ URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
 # URL_TMA_MDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_MAX.csv
 # URL_TMA_NUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_AVG.csv
 # URL_TMA_MUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_MAX.csv
+
+
 
 
 URL_TMA_REF=https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
@@ -192,13 +227,16 @@ echo "Saving in ~/open/$DATE"
 
 
 # F1/16
+# variant ZIP (currently not used)
+#wget $F1_A1TA -O F1_A1TA.zip
+## unzip file
+#unzip -p F1_A1TA.zip  > F1_A1TA.csv.raw
+#rm F1_A1TA.zip
+## header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
+## data: <S>A1TA<T>;"F1/16<T>;<S>CCBY4.0<T>;2021-11-30;100mN26419E47453;19335600;8701020;138600000;62370000
 
-wget $F1_A1TA -O F1_A1TA.zip
-# unzip file
-unzip -p F1_A1TA.zip  > F1_A1TA.csv.raw
-rm F1_A1TA.zip
-# header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
-# data: <S>A1TA<T>;"F1/16<T>;<S>CCBY4.0<T>;2021-11-30;100mN26419E47453;19335600;8701020;138600000;62370000
+# CSV
+wget $F1_A1TA -O F1_A1TA.csv.raw
 
 # data: 
 # different quotes, to be removed
@@ -230,14 +268,18 @@ cp F1_H3A.csv.raw F1_H3A.csv
 
 # F7/16
 
-# download files
-wget $URL_A1TA -O F7_A1TA.zip
-# unzip file
-unzip -p F7_A1TA.zip  > F7_A1TA.csv.raw
-rm F7_A1TA.zip
-# header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
-# data:  <S<A1TA<T<;"F7/16<T<;<S<CCBY4.0<T>;2021-11-30;100mN28428E47592;461902200;82481876;475760000;84956463
-# remove all variants of typographic quotes
+## download files
+#wget $URL_A1TA -O F7_A1TA.zip
+## unzip file
+#unzip -p F7_A1TA.zip  > F7_A1TA.csv.raw
+#rm F7_A1TA.zip
+## header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
+## data:  <S<A1TA<T<;"F7/16<T<;<S<CCBY4.0<T>;2021-11-30;100mN28428E47592;461902200;82481876;475760000;84956463
+
+# variant CSV
+wget $URL_A1TA -O F7_A1TA.csv.raw
+
+## remove all variants of typographic quotes
 sed "s/\x93//g" F7_A1TA.csv.raw > F7_A1TA.csv
 sed -i "s/\x94//g" F7_A1TA.csv
 sed -i "s/\x22//g" F7_A1TA.csv
