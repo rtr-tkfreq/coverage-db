@@ -15,7 +15,7 @@
 # * limitations under the License.
 # ******************************************************************************/
 
-set -x
+# set -x
 export LANG=C
 
 # Import open data mobile network/5G coverage information
@@ -77,6 +77,8 @@ curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 # get URL, from fregment /A1_Speed_Final.csv
 F1_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final.csv"  $TMP_A1TA`
 
+F1_A1TA=https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final_20230630.csv
+
 echo $URL_A1TA
 
 # remove tmp file
@@ -133,6 +135,9 @@ curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 
 # get URL, from fregment /A1_Speed_Final.csv
 URL_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final.csv"  $TMP_A1TA`
+
+URL_A1TA=https://cdn21.a1.net/documents/37417/1476215/A1_3500_Final_202300630.csv
+
 
 echo $URL_A1TA
 
