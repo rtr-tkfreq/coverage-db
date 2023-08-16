@@ -83,12 +83,10 @@ if [$F1_A1TA eq ""]
 then
   echo "No CSV, trying ZIP"
   F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final_[0-9]*.zip"  $TMP_A1TA`
-  echo $F1_A1TAZIP
+  echo ZIP: $F1_A1TAZIP
 else
-  echo $F1_A1TA
+  echo CSV: $F1_A1TA
 fi
-
-echo $URL_A1TA
 
 # remove tmp file
 rm $TMP_A1TA
@@ -137,18 +135,28 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
 
+
+
 # create tmp file, eg /tmp/a1ta.NtDA6N1XiNKFA9
 TMP_A1TA="$(mktemp /tmp/a1ta.XXXXXXXXXXXXXX)" 
 # -s silent
 curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 
-# get URL, from fregment /A1_Speed_Final.csv
-URL_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.csv"  $TMP_A1TA`
-
-echo $URL_A1TA
+# get URL, from fragment
+# example url: https://cdn21.a1.net/documents/37417/1619070/A1_3500_Final_202300630.zip
+F7_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.csv"  $TMP_A1TA`
+# try if zipped
+if [$F7_A1TA eq ""]
+then
+  echo "No CSV, trying ZIP"
+  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.zip"  $TMP_A1TA`
+  echo ZIP: $F7_A1TAZIP
+else
+  echo CSV: $F7_A1TA
+fi
 
 # remove tmp file
-rm TMP_A1TA
+rm $TMP_A1TA
 
 # https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
 # URL_TMA=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/SPEED_5G_23Q1.csv
@@ -160,9 +168,6 @@ rm TMP_A1TA
 # URL_TMA_MDL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_DL_MAX.csv
 # URL_TMA_NUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_AVG.csv
 # URL_TMA_MUL=https://www.magenta.at/content/dam/magenta_at/csv/versorgungsdaten/Rohdaten_SPEEDMAP_UL_MAX.csv
-
-
-
 
 URL_TMA_REF=https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten
 
@@ -192,7 +197,9 @@ TMP_LIWEST="$(mktemp /tmp/liwest.XXXXXXXXXXXXXX)"
 curl -s $URL_LIWEST_REF 2>&1 > $TMP_LIWEST
 
 # get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
-URL_LIWEST=https://www.liwest.at/`grep -o -E "fileadmin[^\>]*(CSV|csv)" $TMP_LIWEST`
+# URL_LIWEST=https://www.liwest.at/`grep -o -E "fileadmin[^\>]*(CSV|csv)" $TMP_LIWEST`
+# updated URL, now e.g. https://www.liwest.at/index.php?eID=dumpFile&t=f&f=24348&token=9a82b19e47f3f3d296b65fa362e541d3c43aeea5
+URL_LIWEST=https://www.liwest.at/`grep -o -E "https://www.liwest.at/index.php\?eID=dumpFile&amp;t=f&amp;f=([0-9]*)&amp;token=([a-z0-9]*)" $TMP_LIWEST`
 
 # remove tmp file
 rm $TMP_LIWEST
@@ -246,7 +253,6 @@ touch F1_A1TA.csv.raw
 echo $F1_A1TA
 if [$F1_A1TA eq ""]
 then
-  echo "ZIP"
   wget $F1_A1TAZIP -O F1_A1TA.zip
   # unzip file
   unzip -p F1_A1TA.zip > F1_A1TA.csv.raw
@@ -265,6 +271,7 @@ sed -i "s/\x22//g" F1_A1TA.csv
 sed -i "s/F5\/22-2/F1\/16/g" F1_A1TA.csv
 
 
+# to be removed
 echo "current header F1_A1TA"
 sed '1q;d' F1_A1TA.csv
 sed '2q;d' F1_A1TA.csv
@@ -300,7 +307,6 @@ touch F7_A1TA.csv.raw
 echo $F7_A1TA
 if [$F7_A1TA eq ""]
 then
-  echo "ZIP"
   wget $F7_A1TAZIP -O F7_A1TA.zip
   # unzip file
   unzip -p F7_A1TA.zip > F7_A1TA.csv.raw
