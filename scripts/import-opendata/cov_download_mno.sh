@@ -75,7 +75,18 @@ TMP_A1TA="$(mktemp /tmp/a1ta.XXXXXXXXXXXXXX)"
 curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 
 # get URL, from fregment /A1_Speed_Final.csv
+# example url: https://cdn21.a1.net/documents/37417/1619070/A1_Speed_Final_20230630.zip
+# sample code fragment: <a href="https://cdn21.a1.net/documents/37417/1619070/A1_Speed_Final_20230630.zip">
 F1_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final_[0-9]*.csv"  $TMP_A1TA`
+# try if zipped
+if [$F1_A1TA eq ""]
+then
+  echo "No CSV, trying ZIP"
+  F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final_[0-9]*.zip"  $TMP_A1TA`
+  echo $F1_A1TAZIP
+else
+  echo $F1_A1TA
+fi
 
 echo $URL_A1TA
 
@@ -227,16 +238,23 @@ echo "Saving in ~/open/$DATE"
 
 
 # F1/16
-# variant ZIP (currently not used)
-#wget $F1_A1TA -O F1_A1TA.zip
-## unzip file
-#unzip -p F1_A1TA.zip  > F1_A1TA.csv.raw
-#rm F1_A1TA.zip
 ## header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 ## data: <S>A1TA<T>;"F1/16<T>;<S>CCBY4.0<T>;2021-11-30;100mN26419E47453;19335600;8701020;138600000;62370000
 
-# CSV
-wget $F1_A1TA -O F1_A1TA.csv.raw
+# unzip if zippped
+touch F1_A1TA.csv.raw
+echo $F1_A1TA
+if [$F1_A1TA eq ""]
+then
+  echo "ZIP"
+  wget $F1_A1TAZIP -O F1_A1TA.zip
+  # unzip file
+  unzip -p F1_A1TA.zip > F1_A1TA.csv.raw
+  rm F1_A1TA.zip
+else
+  echo "CSV"
+  wget $F1_A1TA -O F1_A1TA.csv.raw
+fi    
 
 # data: 
 # different quotes, to be removed
@@ -245,6 +263,12 @@ sed -i "s/\x94//g" F1_A1TA.csv
 sed -i "s/\x22//g" F1_A1TA.csv
 # fix reference
 sed -i "s/F5\/22-2/F1\/16/g" F1_A1TA.csv
+
+
+echo "current header F1_A1TA"
+sed '1q;d' F1_A1TA.csv
+sed '2q;d' F1_A1TA.csv
+
 
 wget $F1_TMA -O F1_TMA.csv.raw
 # header: "OPERATOR","REFERENCE","LICENSE","RFC_DATE","RASTER","DL_NORMAL","UL_NORMAL","DL_MAX","UL_MAX"
@@ -268,16 +292,23 @@ cp F1_H3A.csv.raw F1_H3A.csv
 
 # F7/16
 
-## download files
-#wget $URL_A1TA -O F7_A1TA.zip
-## unzip file
-#unzip -p F7_A1TA.zip  > F7_A1TA.csv.raw
-#rm F7_A1TA.zip
 ## header: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 ## data:  <S<A1TA<T<;"F7/16<T<;<S<CCBY4.0<T>;2021-11-30;100mN28428E47592;461902200;82481876;475760000;84956463
 
-# variant CSV
-wget $URL_A1TA -O F7_A1TA.csv.raw
+# unzip if zippped
+touch F7_A1TA.csv.raw
+echo $F7_A1TA
+if [$F7_A1TA eq ""]
+then
+  echo "ZIP"
+  wget $F7_A1TAZIP -O F7_A1TA.zip
+  # unzip file
+  unzip -p F7_A1TA.zip > F7_A1TA.csv.raw
+  rm F7_A1TA.zip
+else
+  echo "CSV"
+  wget $F7_A1TA -O F7_A1TA.csv.raw
+fi    
 
 ## remove all variants of typographic quotes
 sed "s/\x93//g" F7_A1TA.csv.raw > F7_A1TA.csv
