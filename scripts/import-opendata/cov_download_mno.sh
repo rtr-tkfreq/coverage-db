@@ -362,8 +362,8 @@ wget $URL_SBG -O F7_SBG.csv.raw
 # header: operator,reference,lincense,rfc-date,rasterid,dl_normal,ul_normal,dl_max,ul_max
 # data SBG,F7/16,CCBY4.0,2022-04-07,100mN27480E45541,12000000,1200000,20000000,2000000
 
-# remove newline
-sed 's/\r//g' F7_SBG.csv.raw > F7_SBG.csv
+# remove newline and remove trailing "anschlusspotential"
+sed 's/\r//g' F7_SBG.csv.raw | cut -d';' -f 1-9 >  F7_SBG.csv
 # delimiter "," (should be ";")
 sed -i "s/,/;/g" F7_SBG.csv
 
