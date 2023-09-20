@@ -192,17 +192,21 @@ URL_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohda
 URL_LIWEST_REF=https://www.liwest.at/5g-fwa
 
 # create tmp file, eg /tmp/liwest.NtDA6N1XiNKFA9
-TMP_LIWEST="$(mktemp /tmp/liwest.XXXXXXXXXXXXXX)" 
+#TMP_LIWEST="$(mktemp /tmp/liwest.XXXXXXXXXXXXXX)" 
 # -s silent
-curl -s $URL_LIWEST_REF 2>&1 > $TMP_LIWEST
+#curl -s $URL_LIWEST_REF 2>&1 > $TMP_LIWEST
 
 # get URL, e.g. fileadmin/user_upload/5g/rtr_f716_20221108.CSV
 # URL_LIWEST=https://www.liwest.at/`grep -o -E "fileadmin[^\>]*(CSV|csv)" $TMP_LIWEST`
 # updated URL, now e.g. https://www.liwest.at/index.php?eID=dumpFile&t=f&f=24348&token=9a82b19e47f3f3d296b65fa362e541d3c43aeea5
-URL_LIWEST=https://www.liwest.at/`grep -o -E "https://www.liwest.at/index.php\?eID=dumpFile&amp;t=f&amp;f=([0-9]*)&amp;token=([a-z0-9]*)" $TMP_LIWEST`
+#URL_LIWEST=https://www.liwest.at/`grep -o -E "https://www.liwest.at/index.php\?eID=dumpFile&amp;t=f&amp;f=([0-9]*)&amp;token=([a-z0-9]*)" $TMP_LIWEST`
 
 # remove tmp file
-rm $TMP_LIWEST
+#rm $TMP_LIWEST
+
+# uses static URL after update
+URL_LIWEST=https://www.liwest.at/fileadmin/data-transfer/Import/rtr/rtr_f716.CSV
+
 
 # https://citycom-austria.com/festnetz-versorgungsnetz/
 URL_HGRAZ=https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/GrazNewRadio_Versorgungskarte.csv
