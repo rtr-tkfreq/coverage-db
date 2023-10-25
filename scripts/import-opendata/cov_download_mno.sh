@@ -149,7 +149,10 @@ F7_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.csv" 
 if [$F7_A1TA eq ""]
 then
   echo "No CSV, trying ZIP"
-  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.zip"  $TMP_A1TA`
+#  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.zip"  $TMP_A1TA`
+# 20230930: without date
+  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final.zip"  $TMP_A1TA`
+
   echo ZIP: $F7_A1TAZIP
 else
   echo CSV: $F7_A1TA
