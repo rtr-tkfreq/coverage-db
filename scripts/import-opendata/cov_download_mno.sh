@@ -58,15 +58,14 @@ export LANG=C
 # A1TA
 URL_A1TA_REF=https://www.a1.net/versorgungsdaten-gemaess-auflagen 
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
-# as zip
 
-# F1_A1TA=https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.csv
-# was zip before
-# old raw URL: https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip/b0bdc28c-2622-3df5-a1ec-65514e18b73d?t=1674052129463
-# F1_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
-# F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
-# F1_A1TA=https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
-# F1_A1TA=https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
+# https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.zip
+# https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.csv
+# https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip/b0bdc28c-2622-3df5-a1ec-65514e18b73d?t=1674052129463
+# https://cdn21.a1.net/documents/37417/620288/A1-Speed-Final.zip
+# https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final.zip
+# https://cdn11.a1.net/m/resources/media/zip/2100-Final-20211130-versorgt.zip
+# https://cdn11.a1.net/m/resources/media/excel/A1-Speed-Final-20220331.zip
 
 
 # create tmp file, eg /tmp/a1ta.NtDA6N1XiNKFA9
@@ -77,12 +76,13 @@ curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 # get URL, from fregment /A1_Speed_Final.csv
 # example url: https://cdn21.a1.net/documents/37417/1619070/A1_Speed_Final_20230630.zip
 # sample code fragment: <a href="https://cdn21.a1.net/documents/37417/1619070/A1_Speed_Final_20230630.zip">
-F1_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final_[0-9]*.csv"  $TMP_A1TA`
+F1_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final*.csv"  $TMP_A1TA`
 # try if zipped
 if [$F1_A1TA eq ""]
 then
   echo "No CSV, trying ZIP"
-  F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final_[0-9]*.zip"  $TMP_A1TA`
+  # example url: https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.zip
+  F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final*.zip"  $TMP_A1TA`
   echo ZIP: $F1_A1TAZIP
 else
   echo CSV: $F1_A1TA
@@ -124,13 +124,13 @@ F1_H3A=https://www.drei.at/media/common/info/netzabdeckung/h3a-versorgung-rohdat
 # (was: https://www.a1.net/versorgunsdaten-gemaess-auflagen)
 # (was: https://www.a1.net/5g-netzabdeckung-karte)
 
-# now again csv
-# URL_A1TA=https://cdn21.a1.net/documents/37417/1476215/A1_3500_Final.csv
-# was zip before
-# old raw URL https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip/9d8a2f2d-123b-5da2-524c-23658f8a009a?t=1674052326911
-# URL_A1TA=https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
-# URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
-# URL_A1TA=https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
+
+# https://cdn21.a1.net/documents/37417/1476215/A1_3500_Final+%281%29.zip
+# https://cdn21.a1.net/documents/37417/1476215/A1_3500_Final.csv
+# https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip/9d8a2f2d-123b-5da2-524c-23658f8a009a?t=1674052326911
+# https://cdn21.a1.net/documents/37417/620288/A1-5GNR3500-Final.zip
+# https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final.zip
+# https://cdn11.a1.net/m/resources/media/zip/A1-5GNR3500-Final-20220331.zip
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20211130-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-Final-20210630-versorgt.csv
 # https://cdn11.a1.net/m/resources/media/excel/5GNR3500-20210331-versorgt.csv
@@ -144,14 +144,14 @@ curl -s $URL_A1TA_REF 2>&1 > $TMP_A1TA
 
 # get URL, from fragment
 # example url: https://cdn21.a1.net/documents/37417/1619070/A1_3500_Final_202300630.zip
-F7_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.csv"  $TMP_A1TA`
+F7_A1TA=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final*.csv"  $TMP_A1TA`
 # try if zipped
 if [$F7_A1TA eq ""]
 then
   echo "No CSV, trying ZIP"
 #  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final_[0-9]*.zip"  $TMP_A1TA`
 # 20230930: without date
-  F7_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_3500_Final.zip"  $TMP_A1TA`
+  F7_A1TAZIP=`grep -Eo 'https://[^"]+3500_Final[^"]+'  $TMP_A1TA`
 
   echo ZIP: $F7_A1TAZIP
 else
