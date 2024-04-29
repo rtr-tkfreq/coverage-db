@@ -82,7 +82,10 @@ if [$F1_A1TA eq ""]
 then
   echo "No CSV, trying ZIP"
   # example url: https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final.zip
-  F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final*.zip"  $TMP_A1TA`
+  # F1_A1TAZIP=`grep -Eo "(http|https)://[a-zA-Z0-9./?=_%:-]*A1_Speed_Final*.zip"  $TMP_A1TA`
+  # 2024-04-29: https://cdn21.a1.net/documents/37417/1476218/A1_Speed_Final_20240331.zip
+  F1_A1TAZIP=`grep -Eo 'https://[^"]+A1_Speed_Final[^"]+'  $TMP_A1TA`
+
   echo ZIP: $F1_A1TAZIP
 else
   echo CSV: $F1_A1TA
