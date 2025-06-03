@@ -1,5 +1,5 @@
 #!/bin/bash
-# set -x 
+set -x 
 export LANG=C
 
 DATE=`date '+%Y-%m-%d'`

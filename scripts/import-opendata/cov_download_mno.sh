@@ -236,6 +236,10 @@ curl -s $URL_SBG_REF 2>&1 > $TMP_SBG
 # get URL
 URL_SBG=https://www.salzburg-ag.at/`grep -o -E "content/dam/web18/dokumente/cablelink/internet[^\>]*(CSV|csv)" $TMP_SBG`
 
+
+# quick hack to get current url
+URL_SBG=https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz.csv
+
 # remove tmp file
 rm $TMP_SBG
 
