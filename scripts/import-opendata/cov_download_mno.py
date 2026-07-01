@@ -48,7 +48,10 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
-TIMEOUT = 60
+TIMEOUT = 60  # per-read socket timeout for direct (urllib) downloads, not a total-transfer cap
+RELAY_CONNECT_TIMEOUT = 30  # curl --connect-timeout when using an SSH relay
+RELAY_MAX_TIME = 1800  # curl --max-time when using an SSH relay — some CSVs are 600MB+ uncompressed,
+                        # and the SSH hop adds overhead, so this must be generous
 DEBUG_HEADERS = ("server", "via", "x-cache", "cf-ray", "x-akamai-request-id", "x-amz-cf-id", "x-request-id")
 
 # If set (e.g. "user@relayhost"), every download is done as `ssh RELAY_HOST curl ...`
@@ -96,7 +99,7 @@ class FetchError(RuntimeError):
         return lines
 
 
-def fetch(url: str, extra_headers: Optional[dict] = None) -> bytes:
+def _default_headers(extra_headers: Optional[dict] = None) -> dict:
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -104,7 +107,14 @@ def fetch(url: str, extra_headers: Optional[dict] = None) -> bytes:
     }
     if extra_headers:
         headers.update(extra_headers)
-    req = Request(url, headers=headers)
+    return headers
+
+
+def fetch(url: str, extra_headers: Optional[dict] = None) -> bytes:
+    if RELAY_HOST:
+        return _fetch_via_ssh_relay(url, RELAY_HOST, extra_headers)
+
+    req = Request(url, headers=_default_headers(extra_headers))
     try:
         with urlopen(req, timeout=TIMEOUT) as resp:
             return resp.read()
@@ -113,6 +123,44 @@ def fetch(url: str, extra_headers: Optional[dict] = None) -> bytes:
         raise FetchError(url, exc.code, exc.reason, dict(exc.headers or {}), body) from exc
     except URLError as exc:
         raise FetchError(url, None, str(exc.reason)) from exc
+
+
+def _fetch_via_ssh_relay(url: str, relay: str, extra_headers: Optional[dict] = None) -> bytes:
+    """Run curl on `relay` over ssh, so the request appears to come from that host."""
+    marker = "___COV_HTTP_STATUS___"
+    curl_cmd = [
+        "curl", "-sS", "-L",
+        "--connect-timeout", str(RELAY_CONNECT_TIMEOUT),
+        "--max-time", str(RELAY_MAX_TIME),
+    ]
+    for key, value in _default_headers(extra_headers).items():
+        curl_cmd += ["-H", f"{key}: {value}"]
+    curl_cmd += ["-w", f"\n{marker}:%{{http_code}}", url]
+    remote_cmd = " ".join(shlex.quote(part) for part in curl_cmd)
+
+    proc = subprocess.run(
+        ["ssh", relay, remote_cmd],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=RELAY_MAX_TIME + 60,
+    )
+    if proc.returncode != 0:
+        raise FetchError(
+            url, None, f"ssh relay {relay} exited {proc.returncode}",
+            body=proc.stderr[:2000],
+        )
+
+    marker_bytes = f"\n{marker}:".encode()
+    idx = proc.stdout.rfind(marker_bytes)
+    if idx == -1:
+        raise FetchError(url, None, f"could not parse curl output via relay {relay}", body=proc.stdout[:2000])
+
+    body = proc.stdout[:idx]
+    status_str = proc.stdout[idx + len(marker_bytes):].decode(errors="replace").strip()
+    status = int(status_str) if status_str.isdigit() else None
+    if status is not None and status >= 400:
+        raise FetchError(url, status, f"HTTP error via relay {relay}", body=body[:2000])
+    return body
 
 
 def fetch_text(url: str) -> str:
@@ -247,6 +295,8 @@ JOBS = [
 def run(out_dir: Path) -> list[str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving in {out_dir}")
+    if RELAY_HOST:
+        print(f"Routing downloads via SSH relay: {RELAY_HOST}")
 
     failures = []
     for job in JOBS:
