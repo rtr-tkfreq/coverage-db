@@ -14,7 +14,7 @@
 # * See the License for the specific language governing permissions and
 # * limitations under the License.
 # ******************************************************************************/
-"""Download open-data mobile network / 5G coverage files from the operators.
+"""Download open-data mobile network / 5G coverage files and import them into Postgres.
 
 Format: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 
@@ -25,11 +25,23 @@ Format: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul
 - raster:    100m x 100m raster according to ETRS-LAEA, e.g. "100mN27285E48011"
 - dl_normal/ul_normal/dl_max/ul_max: speeds in Bit/s (no decimals); zero if no coverage
 
-Replaces the previous cov_download_mno.sh.
+Each run downloads into its own ~/open/YYYY-MM-DD_HH-MM-SS directory, then compares
+the new files against every previous run directory: files identical to an earlier
+run (operators publish updates roughly every 3 months, so most daily runs see no
+change) are redundant and get deleted, since their data is already in the database.
+If nothing is left afterwards, the run directory is removed too and the import step
+is skipped entirely. Only genuinely new/changed files get imported — unless
+--keep-duplicates is given, in which case every file is kept and (re-)imported,
+relying on the database to reject rows with an already-known rfc_date.
+
+Replaces the previous cov_download_mno.sh, cov_import_mno.sh, cov_import_all.sh and
+cov_import_final_step.sh.
 """
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import io
 import os
 import re
@@ -38,7 +50,7 @@ import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import HTTPError, URLError
@@ -69,6 +81,9 @@ LIWEST_URL = "https://www.liwest.at/fileadmin/data-transfer/Import/rtr/rtr_f716.
 HGRAZ_URL = "https://raw.githubusercontent.com/GrazNewRadio/Versorgungskarte/main/GrazNewRadio_Versorgungskarte.csv"
 SBG_URL = "https://www.salzburg-ag.at/content/dam/web18/dokumente/cablelink/internet/RohdatenSalzburgAG3_GHz.csv"
 MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterdatenMASS.csv"
+
+DB_NAME = "frq"
+RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 
 
 # --------------------------------------------------------------------------- #
@@ -269,7 +284,7 @@ def fetch_tma(ref_url: str) -> bytes:
 
 
 # --------------------------------------------------------------------------- #
-# Jobs
+# Jobs (defines the canonical operator/file order used throughout)
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -292,7 +307,11 @@ JOBS = [
 ]
 
 
-def run(out_dir: Path) -> list[str]:
+# --------------------------------------------------------------------------- #
+# Download (cov_download_mno.sh)
+# --------------------------------------------------------------------------- #
+
+def download_all(out_dir: Path) -> list[str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"Saving in {out_dir}")
     if RELAY_HOST:
@@ -324,12 +343,174 @@ def run(out_dir: Path) -> list[str]:
     return failures
 
 
-def main() -> int:
-    out_dir = Path.home() / "open" / date.today().isoformat()
-    failures = run(out_dir)
+# --------------------------------------------------------------------------- #
+# Dedupe against previous run directories
+# --------------------------------------------------------------------------- #
 
-    if failures:
-        print(f"\nFailed downloads: {', '.join(failures)}")
+def _previous_run_dirs(root: Path, exclude: Path) -> list[Path]:
+    if not root.is_dir():
+        return []
+    dirs = [d for d in root.iterdir() if d.is_dir() and d != exclude and RUN_DIR_RE.match(d.name)]
+    return sorted(dirs, key=lambda d: d.name, reverse=True)
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _files_identical(a: Path, b: Path) -> bool:
+    return a.stat().st_size == b.stat().st_size and _sha256(a) == _sha256(b)
+
+
+def dedupe(out_dir: Path, root: Path, remove_duplicates: bool) -> list[str]:
+    """Compare each downloaded file in `out_dir` against every previous run directory.
+
+    Operators publish updates roughly every 3 months, so most daily runs produce
+    byte-identical files to the previous run — those are redundant (already
+    imported) and get deleted when `remove_duplicates` is set.
+
+    Normally, returns only the operator names (without ".csv") of files that are
+    new/changed, since those are the only ones that should be (re-)imported. With
+    `remove_duplicates=False` (--keep-duplicates, a debug option), every file is
+    both kept on disk *and* returned for import — the database is expected to
+    reject re-importing an already-known rfc_date, so this is a safe way to force
+    a full re-import attempt.
+    """
+    if not out_dir.is_dir():
+        return []
+
+    previous_dirs = _previous_run_dirs(root, exclude=out_dir)
+    print(f"\nComparing against {len(previous_dirs)} previous run director{'y' if len(previous_dirs) == 1 else 'ies'}...")
+
+    new_or_changed = []
+    all_present = []
+    for csv_path in sorted(out_dir.glob("*.csv")):
+        all_present.append(csv_path.stem)
+        match = next(
+            (prev_dir / csv_path.name for prev_dir in previous_dirs
+             if (prev_dir / csv_path.name).is_file() and _files_identical(csv_path, prev_dir / csv_path.name)),
+            None,
+        )
+
+        if match is None:
+            print(f"  kept:    {csv_path.name} (new or changed)")
+            new_or_changed.append(csv_path.stem)
+        elif remove_duplicates:
+            csv_path.unlink()
+            print(f"  removed: {csv_path.name} (unchanged since {match.parent.name})")
+        else:
+            print(f"  kept:    {csv_path.name} (unchanged since {match.parent.name}; --keep-duplicates set, will still attempt import)")
+
+    if remove_duplicates and not any(out_dir.iterdir()):
+        out_dir.rmdir()
+        print(f"No new or changed files — removed empty directory {out_dir}")
+    else:
+        print(f"Directory kept: {out_dir}")
+
+    return new_or_changed if remove_duplicates else all_present
+
+
+# --------------------------------------------------------------------------- #
+# Import (cov_import_mno.sh / cov_import_all.sh)
+# --------------------------------------------------------------------------- #
+
+def run_psql(sql: str, dbname: str = DB_NAME) -> subprocess.CompletedProcess:
+    """Run a SQL script through the psql CLI, mirroring `echo -e $sql | psql <dbname>`."""
+    result = subprocess.run(["psql", dbname], input=sql, text=True, capture_output=True)
+    if result.stdout:
+        print(result.stdout, end="")
+    if result.returncode != 0:
+        print(result.stderr, end="", file=sys.stderr)
+    return result
+
+
+def import_mno(csv_dir: Path, name: str) -> bool:
+    """COPY a single operator CSV (e.g. "F1_A1TA") into cov_mno. Returns True on success."""
+    csv_path = csv_dir / f"{name}.csv"
+
+    if not (csv_path.is_file() and os.access(csv_path, os.R_OK)):
+        print(f"Skipping {name}: {csv_path} not readable")
+        return False
+
+    print(f"Import for {name}")
+    sql = f"""
+BEGIN;
+
+COPY cov_mno(operator,reference,license,rfc_date,raster,dl_normal,ul_normal,dl_max,ul_max)
+FROM '{csv_path}'
+DELIMITER ';'
+CSV HEADER;
+
+COMMIT;
+"""
+    return run_psql(sql).returncode == 0
+
+
+def import_all(csv_dir: Path, names: list[str]) -> list[str]:
+    """Import the given operator files from `csv_dir`. Returns the names that failed."""
+    failures = []
+    for name in names:
+        if not import_mno(csv_dir, name):
+            failures.append(name)
+    return failures
+
+
+# --------------------------------------------------------------------------- #
+# Final step (cov_import_final_step.sh)
+# --------------------------------------------------------------------------- #
+
+def import_final_step() -> bool:
+    """Backfill geom for newly imported rows from the atraster lookup table."""
+    print("Import, update geom")
+    sql = """
+BEGIN;
+update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.id=raster and cov_mno.geom is null;
+COMMIT;
+"""
+    return run_psql(sql).returncode == 0
+
+
+# --------------------------------------------------------------------------- #
+# CLI
+# --------------------------------------------------------------------------- #
+
+def main(argv: Optional[list[str]] = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--keep-duplicates", action="store_true",
+        help="debug option: keep files (and the run directory) even if identical to a "
+             "previous run, and attempt to import all of them regardless — relies on "
+             "the database rejecting a re-import of an already-known rfc_date",
+    )
+    args = parser.parse_args(argv)
+
+    root = Path.home() / "open"
+    out_dir = root / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+
+    download_failures = download_all(out_dir)
+    kept = dedupe(out_dir, root, remove_duplicates=not args.keep_duplicates)
+
+    if not kept:
+        print("\nNo new or changed data since the last run — skipping import.")
+        if download_failures:
+            print(f"Failed downloads: {', '.join(download_failures)}")
+            return 1
+        print("done")
+        return 0
+
+    import_failures = import_all(out_dir, kept)
+    final_ok = import_final_step()
+
+    if download_failures:
+        print(f"\nFailed downloads: {', '.join(download_failures)}")
+    if import_failures:
+        print(f"Failed imports: {', '.join(import_failures)}")
+
+    if download_failures or import_failures or not final_ok:
         return 1
 
     print("\ndone")
