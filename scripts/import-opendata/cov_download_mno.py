@@ -14,7 +14,7 @@
 # * See the License for the specific language governing permissions and
 # * limitations under the License.
 # ******************************************************************************/
-"""Download open-data mobile network / 5G coverage files and import them into Postgres.
+"""Download open-data mobile network coverage files and import them into Postgres.
 
 Format: operator;reference;license;rfc_date;raster;dl_normal;ul_normal;dl_max;ul_max
 
@@ -84,6 +84,15 @@ MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterda
 
 DB_NAME = "frq"
 RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
+
+# Set by main() from -q/--quiet. Routine progress output is gated on this;
+# failures, warnings and psql error output are always printed regardless.
+QUIET = False
+
+
+def log(*args, **kwargs) -> None:
+    if not QUIET:
+        print(*args, **kwargs)
 
 
 # --------------------------------------------------------------------------- #
@@ -199,10 +208,10 @@ def download_csv_or_zip(csv_url: Optional[str], zip_url: Optional[str],
                          referer: Optional[str] = None) -> bytes:
     headers = {"Referer": referer} if referer else None
     if csv_url:
-        print(f"    CSV: {csv_url}")
+        log(f"    CSV: {csv_url}")
         return fetch(csv_url, headers)
     if zip_url:
-        print(f"    ZIP: {zip_url}")
+        log(f"    ZIP: {zip_url}")
         return extract_zip_csv(fetch(zip_url, headers))
     raise RuntimeError("no CSV or ZIP link found on reference page")
 
@@ -313,13 +322,13 @@ JOBS = [
 
 def download_all(out_dir: Path) -> list[str]:
     out_dir.mkdir(parents=True, exist_ok=True)
-    print(f"Saving in {out_dir}")
+    log(f"Saving in {out_dir}")
     if RELAY_HOST:
-        print(f"Routing downloads via SSH relay: {RELAY_HOST}")
+        log(f"Routing downloads via SSH relay: {RELAY_HOST}")
 
     failures = []
     for job in JOBS:
-        print(f"--- {job.name} ---")
+        log(f"--- {job.name} ---")
         try:
             data = job.fetch()
         except FetchError as exc:
@@ -338,7 +347,7 @@ def download_all(out_dir: Path) -> list[str]:
 
         preview = data.decode("utf-8", errors="replace").splitlines()[:2]
         for line in preview:
-            print(f"    {line}")
+            log(f"    {line}")
 
     return failures
 
@@ -384,7 +393,7 @@ def dedupe(out_dir: Path, root: Path, remove_duplicates: bool) -> list[str]:
         return []
 
     previous_dirs = _previous_run_dirs(root, exclude=out_dir)
-    print(f"\nComparing against {len(previous_dirs)} previous run director{'y' if len(previous_dirs) == 1 else 'ies'}...")
+    log(f"\nComparing against {len(previous_dirs)} previous run director{'y' if len(previous_dirs) == 1 else 'ies'}...")
 
     new_or_changed = []
     all_present = []
@@ -397,19 +406,19 @@ def dedupe(out_dir: Path, root: Path, remove_duplicates: bool) -> list[str]:
         )
 
         if match is None:
-            print(f"  kept:    {csv_path.name} (new or changed)")
+            log(f"  kept:    {csv_path.name} (new or changed)")
             new_or_changed.append(csv_path.stem)
         elif remove_duplicates:
             csv_path.unlink()
-            print(f"  removed: {csv_path.name} (unchanged since {match.parent.name})")
+            log(f"  removed: {csv_path.name} (unchanged since {match.parent.name})")
         else:
-            print(f"  kept:    {csv_path.name} (unchanged since {match.parent.name}; --keep-duplicates set, will still attempt import)")
+            log(f"  kept:    {csv_path.name} (unchanged since {match.parent.name}; --keep-duplicates set, will still attempt import)")
 
     if remove_duplicates and not any(out_dir.iterdir()):
         out_dir.rmdir()
-        print(f"No new or changed files — removed empty directory {out_dir}")
+        log(f"No new or changed files — removed empty directory {out_dir}")
     else:
-        print(f"Directory kept: {out_dir}")
+        log(f"Directory kept: {out_dir}")
 
     return new_or_changed if remove_duplicates else all_present
 
@@ -422,7 +431,7 @@ def run_psql(sql: str, dbname: str = DB_NAME) -> subprocess.CompletedProcess:
     """Run a SQL script through the psql CLI, mirroring `echo -e $sql | psql <dbname>`."""
     result = subprocess.run(["psql", dbname], input=sql, text=True, capture_output=True)
     if result.stdout:
-        print(result.stdout, end="")
+        log(result.stdout, end="")
     if result.returncode != 0:
         print(result.stderr, end="", file=sys.stderr)
     return result
@@ -436,7 +445,7 @@ def import_mno(csv_dir: Path, name: str) -> bool:
         print(f"Skipping {name}: {csv_path} not readable")
         return False
 
-    print(f"Import for {name}")
+    log(f"Import for {name}")
     sql = f"""
 BEGIN;
 
@@ -465,7 +474,7 @@ def import_all(csv_dir: Path, names: list[str]) -> list[str]:
 
 def import_final_step() -> bool:
     """Backfill geom for newly imported rows from the atraster lookup table."""
-    print("Import, update geom")
+    log("Import, update geom")
     sql = """
 BEGIN;
 update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.id=raster and cov_mno.geom is null;
@@ -479,14 +488,23 @@ COMMIT;
 # --------------------------------------------------------------------------- #
 
 def main(argv: Optional[list[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    global QUIET
+
+    parser = argparse.ArgumentParser(
+        description="Download open-data mobile network coverage files and import them into Postgres."
+    )
     parser.add_argument(
         "--keep-duplicates", action="store_true",
         help="debug option: keep files (and the run directory) even if identical to a "
              "previous run, and attempt to import all of them regardless — relies on "
              "the database rejecting a re-import of an already-known rfc_date",
     )
+    parser.add_argument(
+        "-q", "--quiet", action="store_true",
+        help="suppress routine progress output; failures and psql errors are still printed",
+    )
     args = parser.parse_args(argv)
+    QUIET = args.quiet
 
     root = Path.home() / "open"
     out_dir = root / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -495,11 +513,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     kept = dedupe(out_dir, root, remove_duplicates=not args.keep_duplicates)
 
     if not kept:
-        print("\nNo new or changed data since the last run — skipping import.")
+        log("\nNo new or changed data since the last run — skipping import.")
         if download_failures:
             print(f"Failed downloads: {', '.join(download_failures)}")
             return 1
-        print("done")
+        log("done")
         return 0
 
     import_failures = import_all(out_dir, kept)
@@ -513,7 +531,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if download_failures or import_failures or not final_ok:
         return 1
 
-    print("\ndone")
+    log("\ndone")
     return 0
 
 
