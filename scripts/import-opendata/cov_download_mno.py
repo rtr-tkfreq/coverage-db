@@ -85,13 +85,19 @@ MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterda
 DB_NAME = "frq"
 RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 
-# Set by main() from -q/--quiet. Routine progress output is gated on this;
-# failures, warnings and psql error output are always printed regardless.
-QUIET = False
+# Set by main() from -q/--quiet (repeatable: -q, -qq). 0 = normal, 1 = routine
+# progress output suppressed, 2 = failure/warning details suppressed too (exit
+# code still reflects failures either way).
+QUIET_LEVEL = 0
 
 
 def log(*args, **kwargs) -> None:
-    if not QUIET:
+    if QUIET_LEVEL < 1:
+        print(*args, **kwargs)
+
+
+def log_error(*args, **kwargs) -> None:
+    if QUIET_LEVEL < 2:
         print(*args, **kwargs)
 
 
@@ -332,13 +338,13 @@ def download_all(out_dir: Path) -> list[str]:
         try:
             data = job.fetch()
         except FetchError as exc:
-            print("    FAILED:")
+            log_error("    FAILED:")
             for line in exc.debug_lines():
-                print(f"      {line}")
+                log_error(f"      {line}")
             failures.append(job.name)
             continue
         except (ValueError, RuntimeError) as exc:
-            print(f"    FAILED: {exc}")
+            log_error(f"    FAILED: {exc}")
             failures.append(job.name)
             continue
 
@@ -433,7 +439,7 @@ def run_psql(sql: str, dbname: str = DB_NAME) -> subprocess.CompletedProcess:
     if result.stdout:
         log(result.stdout, end="")
     if result.returncode != 0:
-        print(result.stderr, end="", file=sys.stderr)
+        log_error(result.stderr, end="", file=sys.stderr)
     return result
 
 
@@ -442,7 +448,7 @@ def import_mno(csv_dir: Path, name: str) -> bool:
     csv_path = csv_dir / f"{name}.csv"
 
     if not (csv_path.is_file() and os.access(csv_path, os.R_OK)):
-        print(f"Skipping {name}: {csv_path} not readable")
+        log_error(f"Skipping {name}: {csv_path} not readable")
         return False
 
     log(f"Import for {name}")
@@ -488,7 +494,7 @@ COMMIT;
 # --------------------------------------------------------------------------- #
 
 def main(argv: Optional[list[str]] = None) -> int:
-    global QUIET
+    global QUIET_LEVEL
 
     parser = argparse.ArgumentParser(
         description="Download open-data mobile network coverage files and import them into Postgres."
@@ -500,11 +506,12 @@ def main(argv: Optional[list[str]] = None) -> int:
              "the database rejecting a re-import of an already-known rfc_date",
     )
     parser.add_argument(
-        "-q", "--quiet", action="store_true",
-        help="suppress routine progress output; failures and psql errors are still printed",
+        "-q", "--quiet", action="count", default=0,
+        help="suppress routine progress output; repeat (-qq) to also suppress failure "
+             "details — the exit code still reflects failures either way",
     )
     args = parser.parse_args(argv)
-    QUIET = args.quiet
+    QUIET_LEVEL = args.quiet
 
     root = Path.home() / "open"
     out_dir = root / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -515,7 +522,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     if not kept:
         log("\nNo new or changed data since the last run — skipping import.")
         if download_failures:
-            print(f"Failed downloads: {', '.join(download_failures)}")
+            log_error(f"Failed downloads: {', '.join(download_failures)}")
             return 1
         log("done")
         return 0
@@ -524,9 +531,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     final_ok = import_final_step()
 
     if download_failures:
-        print(f"\nFailed downloads: {', '.join(download_failures)}")
+        log_error(f"\nFailed downloads: {', '.join(download_failures)}")
     if import_failures:
-        print(f"Failed imports: {', '.join(import_failures)}")
+        log_error(f"Failed imports: {', '.join(import_failures)}")
 
     if download_failures or import_failures or not final_ok:
         return 1
