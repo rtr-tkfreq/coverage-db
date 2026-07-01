@@ -267,6 +267,11 @@ def clean_mass(data: bytes) -> bytes:
     return data
 
 
+def _strip_bom(data: bytes) -> bytes:
+    """Some operators prefix their file with a UTF-8 BOM (EF BB BF) on the header line."""
+    return data[3:] if data.startswith(b"\xef\xbb\xbf") else data
+
+
 def _normalize_delimiter(data: bytes) -> bytes:
     """Some operators occasionally deliver comma- instead of semicolon-delimited data."""
     first_line = data.split(b"\n", 1)[0]
@@ -279,23 +284,21 @@ def _normalize_delimiter(data: bytes) -> bytes:
 # Per-operator fetch
 # --------------------------------------------------------------------------- #
 
-def fetch_a1(name_fragment: str, fix_reference: bool) -> bytes:
+def fetch_a1_raw(name_fragment: str) -> bytes:
     page = fetch_text(A1_REF_URL)
     csv_url = find_link(page, rf'https://[^"\'\s]+{name_fragment}[^"\'\s]*?\.csv')
     zip_url = None
     if not csv_url:
         zip_url = find_link(page, rf'https://[^"\'\s]+{name_fragment}[^"\'\s]*?\.zip')
-    data = download_csv_or_zip(csv_url, zip_url, referer=A1_REF_URL)
-    return clean_a1(data, fix_reference)
+    return download_csv_or_zip(csv_url, zip_url, referer=A1_REF_URL)
 
 
-def fetch_tma(ref_url: str) -> bytes:
+def fetch_tma_raw(ref_url: str) -> bytes:
     page = fetch_text(ref_url)
     path = find_link(page, r'content/dam/magenta_at/csv/versorgungsdaten/[^"\'\s]*?\.(?:csv|CSV)')
     if not path:
         raise RuntimeError(f"no CSV link found on {ref_url}")
-    data = fetch(f"https://www.magenta.at/{path}")
-    return clean_tma(data)
+    return fetch(f"https://www.magenta.at/{path}")
 
 
 # --------------------------------------------------------------------------- #
@@ -305,20 +308,21 @@ def fetch_tma(ref_url: str) -> bytes:
 @dataclass
 class Job:
     name: str
-    fetch: Callable[[], bytes]
+    fetch: Callable[[], bytes]  # returns the raw, as-downloaded bytes (saved as "<name>.csv.raw")
+    clean: Callable[[bytes], bytes]  # transforms raw bytes into the final "<name>.csv"
 
 
 JOBS = [
-    Job("F1_A1TA", lambda: fetch_a1("A1_Speed_Final", fix_reference=True)),
-    Job("F1_TMA", lambda: fetch_tma(TMA_F1_REF_URL)),
-    Job("F1_H3A", lambda: clean_h3a(fetch(H3A_F1_URL))),
-    Job("F7_A1TA", lambda: fetch_a1("3500_Final", fix_reference=False)),
-    Job("F7_TMA", lambda: fetch_tma(TMA_F7_REF_URL)),
-    Job("F7_H3A", lambda: clean_h3a(fetch(H3A_F7_URL))),
-    Job("F7_LIWEST", lambda: clean_liwest(fetch(LIWEST_URL))),
-    Job("F7_HGRAZ", lambda: clean_hgraz(fetch(HGRAZ_URL))),
-    Job("F7_SBG", lambda: clean_sbg(fetch(SBG_URL))),
-    Job("F7_MASS", lambda: clean_mass(fetch(MASS_URL))),
+    Job("F1_A1TA", lambda: fetch_a1_raw("A1_Speed_Final"), lambda data: clean_a1(data, fix_reference=True)),
+    Job("F1_TMA", lambda: fetch_tma_raw(TMA_F1_REF_URL), clean_tma),
+    Job("F1_H3A", lambda: fetch(H3A_F1_URL), clean_h3a),
+    Job("F7_A1TA", lambda: fetch_a1_raw("3500_Final"), lambda data: clean_a1(data, fix_reference=False)),
+    Job("F7_TMA", lambda: fetch_tma_raw(TMA_F7_REF_URL), clean_tma),
+    Job("F7_H3A", lambda: fetch(H3A_F7_URL), clean_h3a),
+    Job("F7_LIWEST", lambda: fetch(LIWEST_URL), clean_liwest),
+    Job("F7_HGRAZ", lambda: fetch(HGRAZ_URL), clean_hgraz),
+    Job("F7_SBG", lambda: fetch(SBG_URL), clean_sbg),
+    Job("F7_MASS", lambda: fetch(MASS_URL), clean_mass),
 ]
 
 
@@ -336,7 +340,7 @@ def download_all(out_dir: Path) -> list[str]:
     for job in JOBS:
         log(f"--- {job.name} ---")
         try:
-            data = job.fetch()
+            raw = job.fetch()
         except FetchError as exc:
             log_error("    FAILED:")
             for line in exc.debug_lines():
@@ -347,6 +351,18 @@ def download_all(out_dir: Path) -> list[str]:
             log_error(f"    FAILED: {exc}")
             failures.append(job.name)
             continue
+
+        # kept alongside the cleaned .csv for documentation/debugging
+        (out_dir / f"{job.name}.csv.raw").write_bytes(raw)
+
+        try:
+            data = job.clean(raw)
+        except (ValueError, RuntimeError) as exc:
+            log_error(f"    FAILED to clean: {exc}")
+            failures.append(job.name)
+            continue
+
+        data = _strip_bom(data)
 
         out_path = out_dir / f"{job.name}.csv"
         out_path.write_bytes(data)
@@ -416,6 +432,9 @@ def dedupe(out_dir: Path, root: Path, remove_duplicates: bool) -> list[str]:
             new_or_changed.append(csv_path.stem)
         elif remove_duplicates:
             csv_path.unlink()
+            raw_path = csv_path.with_name(csv_path.name + ".raw")
+            if raw_path.is_file():
+                raw_path.unlink()
             log(f"  removed: {csv_path.name} (unchanged since {match.parent.name})")
         else:
             log(f"  kept:    {csv_path.name} (unchanged since {match.parent.name}; --keep-duplicates set, will still attempt import)")
