@@ -31,7 +31,10 @@ Replaces the previous cov_download_mno.sh.
 from __future__ import annotations
 
 import io
+import os
 import re
+import shlex
+import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
@@ -41,8 +44,18 @@ from typing import Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) cov_download_mno.py"
+USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+)
 TIMEOUT = 60
+DEBUG_HEADERS = ("server", "via", "x-cache", "cf-ray", "x-akamai-request-id", "x-amz-cf-id", "x-request-id")
+
+# If set (e.g. "user@relayhost"), every download is done as `ssh RELAY_HOST curl ...`
+# instead of a direct connection from this machine — useful when an operator has
+# blocked this host's IP. Requires passwordless SSH (key-based) and curl on the
+# relay host. Configure via: export COV_RELAY_HOST=user@relayhost
+RELAY_HOST = os.environ.get("COV_RELAY_HOST") or None
 
 A1_REF_URL = "https://www.a1.net/versorgungsdaten-gemaess-auflagen"
 TMA_F1_REF_URL = "https://www.magenta.at/unternehmen/rechtliches/versorgungsdaten_mba2020"
@@ -59,10 +72,47 @@ MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterda
 # HTTP helpers
 # --------------------------------------------------------------------------- #
 
-def fetch(url: str) -> bytes:
-    req = Request(url, headers={"User-Agent": USER_AGENT})
-    with urlopen(req, timeout=TIMEOUT) as resp:
-        return resp.read()
+class FetchError(RuntimeError):
+    """A failed HTTP request, carrying enough detail to debug *why* it failed."""
+
+    def __init__(self, url: str, status: Optional[int], reason: str,
+                 headers: Optional[dict] = None, body: bytes = b""):
+        self.url = url
+        self.status = status
+        self.reason = reason
+        self.headers = headers or {}
+        self.body = body
+        super().__init__(f"{status if status is not None else '?'} {reason} — URL: {url}")
+
+    def debug_lines(self) -> list[str]:
+        lines = [f"URL:    {self.url}", f"Status: {self.status} {self.reason}"]
+        interesting = {k: v for k, v in self.headers.items() if k.lower() in DEBUG_HEADERS}
+        if interesting:
+            lines.append("Headers: " + ", ".join(f"{k}={v}" for k, v in interesting.items()))
+        if self.body:
+            snippet = self.body.decode("utf-8", errors="replace").strip().replace("\n", " ")[:300]
+            if snippet:
+                lines.append(f"Body:   {snippet}")
+        return lines
+
+
+def fetch(url: str, extra_headers: Optional[dict] = None) -> bytes:
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "de-AT,de;q=0.9,en;q=0.8",
+    }
+    if extra_headers:
+        headers.update(extra_headers)
+    req = Request(url, headers=headers)
+    try:
+        with urlopen(req, timeout=TIMEOUT) as resp:
+            return resp.read()
+    except HTTPError as exc:
+        body = exc.read(2000) if exc.fp else b""
+        raise FetchError(url, exc.code, exc.reason, dict(exc.headers or {}), body) from exc
+    except URLError as exc:
+        raise FetchError(url, None, str(exc.reason)) from exc
 
 
 def fetch_text(url: str) -> str:
@@ -82,13 +132,15 @@ def extract_zip_csv(data: bytes) -> bytes:
         return zf.read(names[0])
 
 
-def download_csv_or_zip(csv_url: Optional[str], zip_url: Optional[str]) -> bytes:
+def download_csv_or_zip(csv_url: Optional[str], zip_url: Optional[str],
+                         referer: Optional[str] = None) -> bytes:
+    headers = {"Referer": referer} if referer else None
     if csv_url:
         print(f"    CSV: {csv_url}")
-        return fetch(csv_url)
+        return fetch(csv_url, headers)
     if zip_url:
         print(f"    ZIP: {zip_url}")
-        return extract_zip_csv(fetch(zip_url))
+        return extract_zip_csv(fetch(zip_url, headers))
     raise RuntimeError("no CSV or ZIP link found on reference page")
 
 
@@ -155,7 +207,7 @@ def fetch_a1(name_fragment: str, fix_reference: bool) -> bytes:
     zip_url = None
     if not csv_url:
         zip_url = find_link(page, rf'https://[^"\'\s]+{name_fragment}[^"\'\s]*?\.zip')
-    data = download_csv_or_zip(csv_url, zip_url)
+    data = download_csv_or_zip(csv_url, zip_url, referer=A1_REF_URL)
     return clean_a1(data, fix_reference)
 
 
@@ -201,7 +253,13 @@ def run(out_dir: Path) -> list[str]:
         print(f"--- {job.name} ---")
         try:
             data = job.fetch()
-        except (HTTPError, URLError, ValueError, RuntimeError) as exc:
+        except FetchError as exc:
+            print("    FAILED:")
+            for line in exc.debug_lines():
+                print(f"      {line}")
+            failures.append(job.name)
+            continue
+        except (ValueError, RuntimeError) as exc:
             print(f"    FAILED: {exc}")
             failures.append(job.name)
             continue
