@@ -324,14 +324,20 @@ def deploy_tiles(tiles_dir: Path, operator: str, reference: str, rfc_date: str) 
     concat('/cov/', replace(operator,'@',''), '/', coalesce(replace(reference,'/','_'),'any'), '/', date)
     — '@' stripped from the operator segment, 'any' when reference is empty/None.
     """
+    import shutil
+
     op_slug = operator.replace("@", "")
     ref_slug = reference.replace("/", "_") if reference else "any"
     dest = TILE_DOCROOT / op_slug / ref_slug / rfc_date
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
-        import shutil
         shutil.rmtree(dest)
-    tiles_dir.rename(dest)
+    # Path.rename() only works within a single filesystem; the render
+    # workdir (under the system temp dir) and TILE_DOCROOT are commonly on
+    # different mounts, which makes a plain rename fail with "Invalid
+    # cross-device link". shutil.move() falls back to copy+delete when a
+    # rename isn't possible, so it works either way.
+    shutil.move(str(tiles_dir), str(dest))
     return f"/cov/{op_slug}/{ref_slug}/{rfc_date}"
 
 
