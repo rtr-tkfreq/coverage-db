@@ -1,0 +1,9 @@
+[Unit]
+Description=Run cov-render.service on a schedule
+
+[Timer]
+OnCalendar={{ cov_render_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

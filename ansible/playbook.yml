@@ -1,0 +1,379 @@
+---
+# Deploys the full coverage-data stack:
+#   - PostgreSQL + PostGIS from the official PGDG apt repo (not Debian's build)
+#   - QGIS (incl. qgis_process) from the official qgis.org apt repo
+#   - nginx from plain Debian
+#   - PostgREST from its upstream static binary release (not packaged for Debian)
+#   - cov_download_mno.py (download + import, runs in minutes) and
+#     cov_render_tiles.py (QGIS render + publish, can run for hours), as two
+#     independently-scheduled systemd timers
+#
+# Database/schema init (roles + frq_scheme.sql) is opt-in via cov_init_schema,
+# since applying it to an already-populated production database would be
+# destructive. NOT included here, deliberately: populating `atraster` from the
+# Statistik Austria raster grid — that uses `shp2pgsql -d` (DROP + recreate),
+# which would destroy an existing production atraster table. See INSTALL.md.
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbook.yml
+#   ansible-playbook -i inventory.ini playbook.yml -e cov_init_schema=true   # fresh DB only
+
+- name: Deploy coverage-db download/import/render automation
+  hosts: coverage_db
+  become: true
+
+  vars:
+    cov_install_dir: /opt/coverage-db/scripts/import-opendata
+    cov_repo_src: "{{ playbook_dir }}/../scripts/import-opendata"
+    cov_run_user: postgres
+    cov_db_name: frq
+    cov_tile_docroot: /var/www/tiles/cov
+
+    # Rendering parameters, exposed here so they can be tuned without touching
+    # cov_render_tiles.py. Match cov_render_tiles.py's own defaults.
+    cov_tile_extent: "977649.9582,1948091.0889,5838029.9512,6281289.9249[EPSG:3857]"
+    cov_tile_zoom_min: 4
+    cov_tile_zoom_max: 14
+    cov_tile_dpi: 96
+    cov_tile_quality: 75
+
+    # Schedules (systemd OnCalendar syntax)
+    cov_download_schedule: "*-*-* 03:00:00"   # daily, minutes-scale job
+    cov_render_schedule: "*-*-* 04:00:00"     # daily, can run for hours; lockfile prevents overlap
+
+    # Opt-in: only load the schema on a genuinely fresh database.
+    cov_init_schema: false
+    cov_relay_host: ""   # set to "user@relayhost" if an operator blocks this host's IP
+
+    # CHANGE THESE for any real deployment (placeholders match the existing
+    # convention in prepare-api.sql / postgrest/config — the authenticator
+    # password here MUST match postgrest's db-uri password).
+    cov_authenticator_password: samepasswordasinpostgrest
+    cov_qgis_db_password: qgispassword
+
+    postgresql_version: "17"
+    # https://www.postgresql.org/download/linux/debian/
+    postgresql_repo_suite: "{{ ansible_distribution_release }}-pgdg"
+    # https://qgis.org/resources/installation-guide/ — confirmed working: this
+    # repo/suite currently serves QGIS 4.0.3 for trixie. Rendering requires
+    # the project file's QGIS version and the installed qgis_process version
+    # to be the same major line (a project saved with 4.x hung indefinitely
+    # under 3.40/Qt5 specifically in native:tilesxyzdirectory) — if a host
+    # already has Debian-bundled QGIS 3.x installed, purge it first
+    # (`apt purge 'qgis*' 'python3-qgis*' 'libqgis*'`) since 4.x (Qt6) cannot
+    # be installed alongside 3.x (Qt5) packages; this playbook does not do
+    # that purge automatically since it's destructive on a host that might
+    # still need the old version.
+    qgis_repo_suite: "{{ ansible_distribution_release }}"
+
+    # PostgREST isn't packaged for Debian; installed from the upstream static binary release.
+    postgrest_version: "14.14"
+
+  tasks:
+    - name: Install apt prerequisites for adding repos
+      ansible.builtin.apt:
+        name:
+          - curl
+          - xz-utils
+          - ca-certificates
+          - gnupg
+        state: present
+        update_cache: true
+
+    # --- PostgreSQL from the official PGDG repo (not Debian's bundled version) ---
+
+    - name: Add PostgreSQL PGDG apt repository
+      ansible.builtin.deb822_repository:
+        name: pgdg
+        types: deb
+        uris: https://apt.postgresql.org/pub/repos/apt
+        suites: "{{ postgresql_repo_suite }}"
+        components: main
+        architectures: amd64
+        signed_by: https://www.postgresql.org/media/keys/ACCC4CF8.asc
+        state: present
+
+    - name: Install PostgreSQL + PostGIS
+      ansible.builtin.apt:
+        name:
+          - "postgresql-{{ postgresql_version }}"
+          - "postgresql-{{ postgresql_version }}-postgis-3"
+          - "postgresql-{{ postgresql_version }}-postgis-3-scripts"
+        state: present
+        update_cache: true
+
+    # --- QGIS from the official qgis.org repo (not Debian's bundled version) ---
+
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add QGIS apt signing key
+      ansible.builtin.get_url:
+        url: https://download.qgis.org/downloads/qgis-archive-keyring.gpg
+        dest: /etc/apt/keyrings/qgis-archive-keyring.gpg
+        mode: "0644"
+
+    - name: Add QGIS apt repository
+      ansible.builtin.deb822_repository:
+        name: qgis
+        types: deb
+        uris: https://qgis.org/debian
+        suites: "{{ qgis_repo_suite }}"
+        components: main
+        architectures: amd64
+        signed_by: /etc/apt/keyrings/qgis-archive-keyring.gpg
+        state: present
+
+    - name: Install QGIS (includes qgis_process)
+      ansible.builtin.apt:
+        name:
+          - qgis
+          - python3-qgis
+          - python3
+        state: present
+        update_cache: true
+      # On a host with Debian's bundled QGIS 3.x already installed, this can
+      # fail with unmet dependencies (Qt5 vs Qt6 package conflicts). Fix:
+      # `apt purge 'qgis*' 'python3-qgis*' 'libqgis*'` first, then re-run.
+
+    # --- nginx from plain Debian (not upstream nginx.org repo) ---
+
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+
+    - name: Deploy the coverage-db nginx config fragment
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../nginx/example.com"
+        dest: /etc/nginx/snippets/coverage-db.conf
+        mode: "0644"
+      notify: reload nginx
+      # NOTE: this is a fragment (has a `map` directive that belongs in the
+      # http{} context, plus `location` blocks that belong in a server{}
+      # block) — it is not auto-included anywhere. Wire it into a real vhost
+      # (with the actual server_name/TLS config) by hand; deploying it here
+      # is just to get the reference file onto the host.
+
+    - name: Ensure nginx is running
+      ansible.builtin.systemd:
+        name: nginx
+        state: started
+        enabled: true
+
+    # --- PostgREST: not packaged for Debian, install the upstream static binary ---
+
+    - name: Download PostgREST release
+      ansible.builtin.unarchive:
+        src: "https://github.com/PostgREST/postgrest/releases/download/v{{ postgrest_version }}/postgrest-v{{ postgrest_version }}-linux-static-x86-64.tar.xz"
+        dest: /usr/local/sbin
+        remote_src: true
+        mode: "0755"
+        creates: /usr/local/sbin/postgrest
+
+    - name: Ensure /etc/postgrest exists
+      ansible.builtin.file:
+        path: /etc/postgrest
+        state: directory
+        mode: "0750"
+        owner: root
+        group: root
+
+    - name: Deploy PostgREST config
+      ansible.builtin.template:
+        src: postgrest-config.j2
+        dest: /etc/postgrest/config
+        mode: "0640"
+      notify: restart postgrest
+
+    - name: Deploy PostgREST systemd unit
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../postgrest/postgrest.service"
+        dest: /etc/systemd/system/postgrest.service
+        mode: "0644"
+      notify: reload systemd
+
+    - name: Flush handlers so postgrest.service is known before enabling
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start PostgREST
+      ansible.builtin.systemd:
+        name: postgrest
+        enabled: true
+        state: started
+
+    - name: Ensure install directory exists
+      ansible.builtin.file:
+        path: "{{ cov_install_dir }}"
+        state: directory
+        owner: "{{ cov_run_user }}"
+        group: "{{ cov_run_user }}"
+        mode: "0755"
+
+    - name: Deploy control scripts
+      ansible.builtin.copy:
+        src: "{{ cov_repo_src }}/{{ item }}"
+        dest: "{{ cov_install_dir }}/{{ item }}"
+        owner: "{{ cov_run_user }}"
+        group: "{{ cov_run_user }}"
+        mode: "0755"
+      loop:
+        - cov_download_mno.py
+        - cov_render_tiles.py
+        - cov_head.py
+
+    - name: Deploy QGIS project templates
+      ansible.builtin.copy:
+        src: "{{ cov_repo_src }}/{{ item }}"
+        dest: "{{ cov_install_dir }}/{{ item }}"
+        owner: "{{ cov_run_user }}"
+        group: "{{ cov_run_user }}"
+        mode: "0644"
+      loop:
+        - tma.qgs
+
+    - name: Create .pgpass for headless QGIS auth (qgis role, TCP)
+      ansible.builtin.copy:
+        dest: /var/lib/postgresql/.pgpass
+        content: "127.0.0.1:5432:{{ cov_db_name }}:qgis:{{ cov_qgis_db_password }}\n"
+        owner: "{{ cov_run_user }}"
+        group: "{{ cov_run_user }}"
+        mode: "0600"
+      # The QGIS project's PostgreSQL layer connects over TCP
+      # (host=127.0.0.1), which pg_hba.conf requires scram-sha-256 for —
+      # unlike psql invoked directly by the postgres OS user, which uses peer
+      # auth over the local socket and needs no password. Without this file,
+      # qgis_process hangs indefinitely on an invisible headless credential
+      # prompt instead of failing. Assumes cov_run_user's home is
+      # /var/lib/postgresql (true for the default "postgres" OS user).
+      # Not gated by cov_init_schema: safe to (re)write even when the qgis
+      # role already exists, as long as cov_qgis_db_password matches its
+      # actual password.
+
+    - name: Ensure tile docroot exists
+      ansible.builtin.file:
+        path: "{{ cov_tile_docroot }}"
+        state: directory
+        owner: "{{ cov_run_user }}"
+        group: www-data
+        mode: "0775"
+
+    - name: Ensure PostgreSQL service is running
+      ansible.builtin.systemd:
+        name: postgresql
+        state: started
+        enabled: true
+
+    - name: Check whether the {{ cov_db_name }} database already exists
+      ansible.builtin.command:
+        cmd: psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ cov_db_name }}'"
+      become_user: "{{ cov_run_user }}"
+      register: cov_db_exists
+      changed_when: false
+
+    - name: Create {{ cov_db_name }} database
+      ansible.builtin.command:
+        cmd: createdb {{ cov_db_name }}
+      become_user: "{{ cov_run_user }}"
+      when:
+        - cov_init_schema | bool
+        - (cov_db_exists.stdout | default('') | trim) != '1'
+
+    - name: Render role-init SQL
+      ansible.builtin.template:
+        src: init-roles.sql.j2
+        dest: /tmp/cov-init-roles.sql
+        mode: "0600"
+      when: cov_init_schema | bool
+
+    - name: Create required roles (web_anon, authenticator, qgis)
+      ansible.builtin.command:
+        cmd: psql -d {{ cov_db_name }} -f /tmp/cov-init-roles.sql
+      become_user: "{{ cov_run_user }}"
+      when: cov_init_schema | bool
+
+    - name: Remove rendered role-init SQL (contains passwords)
+      ansible.builtin.file:
+        path: /tmp/cov-init-roles.sql
+        state: absent
+      when: cov_init_schema | bool
+
+    - name: Check whether cov_mno already has data (safety check for schema init)
+      ansible.builtin.command:
+        cmd: psql -d {{ cov_db_name }} -t -A -c "SELECT count(*) FROM cov_mno"
+      become_user: "{{ cov_run_user }}"
+      register: cov_mno_count
+      failed_when: false
+      changed_when: false
+
+    - name: Load database schema (only on a fresh/empty database)
+      ansible.builtin.command:
+        cmd: psql -d {{ cov_db_name }} -f {{ playbook_dir }}/../postgresql/frq_scheme.sql
+      become_user: "{{ cov_run_user }}"
+      when:
+        - cov_init_schema | bool
+        - cov_mno_count.rc != 0 or (cov_mno_count.stdout | default('0') | trim) == '0'
+
+    - name: Add cov_mno.geom column (populated by cov_download_mno.py's final step; not in the base schema dump)
+      ansible.builtin.command:
+        cmd: >-
+          psql -d {{ cov_db_name }} -c
+          "ALTER TABLE cov_mno ADD COLUMN IF NOT EXISTS geom geometry(MultiPolygon, 3857);"
+      become_user: "{{ cov_run_user }}"
+      when: cov_init_schema | bool
+
+    - name: Add spatial index on cov_mno.geom (required for bbox-filtered QGIS rendering to perform acceptably)
+      ansible.builtin.command:
+        cmd: >-
+          psql -d {{ cov_db_name }} -c
+          "CREATE INDEX IF NOT EXISTS cov_mno_geom_idx ON cov_mno USING gist(geom);"
+      become_user: "{{ cov_run_user }}"
+      when: cov_init_schema | bool
+      # Without this, the QGIS layer's bbox-filtered subquery falls back to a
+      # near-full-table scan (confirmed via EXPLAIN ANALYZE: 1.6s limited /
+      # would be much worse unlimited, vs 10.7ms with the index) — on a
+      # 6.6M-row table this is the difference between a render finishing and
+      # one that looks hung.
+
+    - name: Deploy systemd units
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/systemd/system/{{ item }}"
+        mode: "0644"
+      loop:
+        - cov-download.service
+        - cov-download.timer
+        - cov-render.service
+        - cov-render.timer
+      notify: reload systemd
+
+    - name: Flush handlers so units are known before enabling
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start timers
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        enabled: true
+        state: started
+      loop:
+        - cov-download.timer
+        - cov-render.timer
+
+  handlers:
+    - name: reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: reload nginx
+      ansible.builtin.systemd:
+        name: nginx
+        state: reloaded
+
+    - name: restart postgrest
+      ansible.builtin.systemd:
+        name: postgrest
+        state: restarted

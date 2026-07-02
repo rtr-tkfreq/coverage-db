@@ -1,0 +1,18 @@
+[Unit]
+Description=Coverage DB: render + publish XYZ tiles via QGIS
+Wants=postgresql.service
+After=postgresql.service
+
+[Service]
+Type=oneshot
+# rendering the whole country at these zoom levels can take hours
+TimeoutStartSec=0
+User={{ cov_run_user }}
+WorkingDirectory={{ cov_install_dir }}
+Environment=COV_TILE_DOCROOT={{ cov_tile_docroot }}
+Environment=COV_TILE_EXTENT={{ cov_tile_extent }}
+Environment=COV_TILE_ZOOM_MIN={{ cov_tile_zoom_min }}
+Environment=COV_TILE_ZOOM_MAX={{ cov_tile_zoom_max }}
+Environment=COV_TILE_DPI={{ cov_tile_dpi }}
+Environment=COV_TILE_QUALITY={{ cov_tile_quality }}
+ExecStart={{ cov_install_dir }}/cov_render_tiles.py -q

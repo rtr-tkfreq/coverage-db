@@ -1,0 +1,16 @@
+-- idempotent: safe to re-run
+DO $$
+BEGIN
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'web_anon') THEN
+      CREATE ROLE web_anon NOLOGIN;
+   END IF;
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'authenticator') THEN
+      CREATE ROLE authenticator NOINHERIT LOGIN PASSWORD '{{ cov_authenticator_password }}';
+   END IF;
+   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = 'qgis') THEN
+      CREATE ROLE qgis LOGIN PASSWORD '{{ cov_qgis_db_password }}';
+   END IF;
+END
+$$;
+
+GRANT web_anon TO authenticator;

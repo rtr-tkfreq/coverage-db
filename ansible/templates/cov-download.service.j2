@@ -1,0 +1,13 @@
+[Unit]
+Description=Coverage DB: download + import mobile network coverage data
+Wants=postgresql.service network-online.target
+After=postgresql.service network-online.target
+
+[Service]
+Type=oneshot
+User={{ cov_run_user }}
+WorkingDirectory={{ cov_install_dir }}
+{% if cov_relay_host %}
+Environment=COV_RELAY_HOST={{ cov_relay_host }}
+{% endif %}
+ExecStart={{ cov_install_dir }}/cov_download_mno.py -q

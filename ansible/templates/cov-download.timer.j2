@@ -1,0 +1,9 @@
+[Unit]
+Description=Run cov-download.service on a schedule
+
+[Timer]
+OnCalendar={{ cov_download_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
