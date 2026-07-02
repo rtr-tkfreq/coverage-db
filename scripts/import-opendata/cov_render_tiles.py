@@ -24,6 +24,19 @@ Each project's SQL selects `rfc_date = (SELECT MAX(rfc_date) FROM ...)`
 itself, so the project always reflects current data — nothing here patches
 the project file before rendering.
 
+A target can also be *derived*: instead of reading cov_mno directly, its
+QGIS project combines other targets (e.g. "all operators" or "F7/16 from
+A1TA+TMA+H3A"). Declare this via `RenderTarget.depends_on` — a list of the
+(operator, reference) pairs it's built from. This replaces the old
+`tileurl.in_all`-style boolean-per-row convention with an explicit,
+code-owned dependency list: a derived target's "is there new data" check
+looks at whether any dependency has a newer rendered date than the derived
+target's own latest `tileurl` row, and its rfc_date is the max of its
+dependencies' dates. List derived targets *after* the targets they depend on
+in TARGETS — everything below runs strictly sequentially in list order (see
+`main()`), so a single run picks up a leaf render and then its dependent
+combined render in the same pass, never in parallel.
+
 Rendering the whole country at zoom 4-14 can take HOURS. This is deliberately
 a separate script from cov_download_mno.py (which only takes minutes) so it
 can run on its own, longer cron/systemd cadence without blocking imports.
@@ -78,10 +91,20 @@ class RenderTarget:
     operator: str
     reference: str  # e.g. "F1/16"
     project_path: Path
+    # Leaf (operator, reference) pairs this target is combined from. Empty
+    # for an ordinary per-operator target. Non-empty marks this as a derived
+    # target: see the module docstring.
+    depends_on: tuple[tuple[str, str], ...] = ()
 
 
 TARGETS = [
     RenderTarget("TMA", "F1/16", PROJECT_DIR / "tma.qgs"),
+    # Add derived targets after their dependencies once a combined project
+    # template exists for them, e.g.:
+    # RenderTarget("@all", "F1/16", PROJECT_DIR / "all_operators.qgs",
+    #              depends_on=(("A1TA", "F1/16"), ("TMA", "F1/16"), ("H3A", "F1/16"))),
+    # RenderTarget("@all", "F7/16", PROJECT_DIR / "f7_16_combo.qgs",
+    #              depends_on=(("A1TA", "F7/16"), ("TMA", "F7/16"), ("H3A", "F7/16"))),
 ]
 
 
@@ -119,6 +142,33 @@ def latest_unrendered_date(operator: str, reference: str) -> Optional[str]:
         LIMIT 1;
     """
     return psql_scalar(sql)
+
+
+def latest_tileurl_date(operator: str, reference: str) -> Optional[str]:
+    """Newest rfc_date already published to tileurl for (operator, reference)."""
+    sql = f"""
+        SELECT date::text FROM tileurl
+        WHERE operator = '{operator}' AND reference = '{reference}'
+        ORDER BY date DESC
+        LIMIT 1;
+    """
+    return psql_scalar(sql)
+
+
+def pending_combined_date(target: "RenderTarget") -> Optional[str]:
+    """rfc_date a derived target should render for, or None if nothing changed.
+
+    A derived target is up to date once its own tileurl entry's date matches
+    the max date across all of its dependencies. Waits (returns None) until
+    every dependency has been rendered at least once.
+    """
+    dep_dates = [latest_tileurl_date(op, ref) for op, ref in target.depends_on]
+    if any(date is None for date in dep_dates):
+        return None
+    combined_date = max(dep_dates)
+    if latest_tileurl_date(target.operator, target.reference) == combined_date:
+        return None
+    return combined_date
 
 
 def register_tileurl(operator: str, reference: str, rfc_date: str, url: str) -> bool:
@@ -185,7 +235,10 @@ def process_target(target: RenderTarget) -> bool:
         log_error(f"  no project template at {target.project_path}")
         return False
 
-    rfc_date = latest_unrendered_date(target.operator, target.reference)
+    if target.depends_on:
+        rfc_date = pending_combined_date(target)
+    else:
+        rfc_date = latest_unrendered_date(target.operator, target.reference)
     if not rfc_date:
         log("  nothing new to render")
         return True
