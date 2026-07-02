@@ -24,19 +24,33 @@ Each project's SQL selects `rfc_date = (SELECT MAX(rfc_date) FROM ...)`
 itself, so the project always reflects current data — nothing here patches
 the project file before rendering.
 
-A target can also be *derived*: instead of reading cov_mno directly, its
-QGIS project combines other targets (e.g. "all operators" or "F7/16 from
-A1TA+TMA+H3A"). Which layers exist and which combine which is owned by the
-database (`cov_layer`/`cov_layer_source` — see postgresql/frq_scheme.sql),
-not by this script: PROJECT_PATHS below only maps a layer code to *where its
-QGIS project file is on this host*, a server-local detail that has no
-business being public API data. `build_targets()` joins the two at run time.
-A derived target's "is there new data" check looks at whether any dependency
-has a newer rendered date than the derived target's own latest `tileurl`
-row, and its rfc_date is the max of its dependencies' dates. Leaf targets are
-always processed before targets that depend on them (see `build_targets()`),
-and everything runs strictly sequentially (see `main()`) — never in
-parallel.
+There are two kinds of targets. A LEAF_PROJECTS entry renders one real
+(operator, reference) pair directly from cov_mno — its identity is that pair,
+not any particular cov_layer row (a `cov_layer` selection is just an alias
+over one or more of these; see below). A COMBINED_PROJECTS entry instead
+combines several leaves (e.g. "all operators" or "F7/16 from A1TA+TMA+H3A")
+per its cov_layer_source rows, and is identified by its own cov_layer code,
+since it publishes its own tileurl row under that code. Which layers exist
+and which combine which is owned by the database (`cov_layer`/
+`cov_layer_source` — see postgresql/frq_scheme.sql), not by this script:
+LEAF_PROJECTS/COMBINED_PROJECTS below only map to *where a project file is
+on this host*, a server-local detail that has no business being public API
+data. `build_targets()` joins these with the DB at run time.
+
+Selecting a single reference of an operator that already has another
+reference under the same code (e.g. adding "TMA 3600 MHz" alongside TMA's
+existing F1/16 listing) needs no combined target at all — it's a plain
+LEAF_PROJECTS entry for (TMA, F7/16), plus a cov_layer_source row aliasing
+a new cov_layer code to it (see api.layer_tileurl() in migrate_cov_layer.sql,
+which resolves such aliases straight to the leaf's own tiles instead of
+expecting a separate render).
+
+A combined target's "is there new data" check looks at whether any
+dependency has a newer rendered date than the combined target's own latest
+`tileurl` row, and its rfc_date is the max of its dependencies' dates. Leaf
+targets are always processed before targets that depend on them (see
+`build_targets()`), and everything runs strictly sequentially (see
+`main()`) — never in parallel.
 
 Rendering the whole country at zoom 4-14 can take HOURS. This is deliberately
 a separate script from cov_download_mno.py (which only takes minutes) so it
@@ -83,9 +97,7 @@ def log_error(*args, **kwargs) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Render targets: one QGIS project template per layer code (cov_layer.code).
-# Add an entry here once a layer's project template exists; cov_layer_source
-# (the database) supplies the dependency graph automatically.
+# Render targets.
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -94,23 +106,43 @@ class RenderTarget:
     reference: str  # e.g. "F1/16"
     project_path: Path
     # Leaf (operator, reference) pairs this target is combined from, per
-    # cov_layer_source. Empty for an ordinary per-operator target.
+    # cov_layer_source. Empty for a leaf target (reads cov_mno directly).
     depends_on: tuple[tuple[str, str], ...] = ()
     # Whether `reference` is this operator's canonical/default one (used for
     # point-info when no specific reference is requested). True for e.g.
-    # TMA's F1/16, false for a secondary band like TMA's F7/16 if that ever
-    # becomes its own target. Written to tileurl.in_all for backward
-    # compatibility with the old (pre-cov_layer) api.cov() overloads during
-    # the migration window — see postgresql/migrate_cov_layer.sql.
+    # TMA's F1/16, false for a secondary band like TMA's F7/16. Written to
+    # tileurl.in_all for backward compatibility with the old (pre-cov_layer)
+    # api.cov() overloads during the migration window — see
+    # postgresql/migrate_cov_layer.sql.
     primary: bool = True
 
 
-PROJECT_PATHS: dict[str, Path] = {
-    "TMA": PROJECT_DIR / "tma.qgs",
-    # Add a layer's project file here once it exists — its cov_layer.reference
-    # and any cov_layer_source rows are picked up automatically:
+@dataclass
+class LeafProject:
+    project_path: Path
+    primary: bool = True
+
+
+# One entry per real (operator, reference) that gets rendered directly from
+# cov_mno. A cov_layer selection doesn't need its own entry here just because
+# it exists — most are plain aliases over one of these (or, for a combined
+# layer, over several — see COMBINED_PROJECTS below). Set primary=False on
+# any second reference added for an operator that already has one, so
+# tileurl.in_all stays accurate for the old (deprecated) api.cov() overloads.
+LEAF_PROJECTS: dict[tuple[str, str], LeafProject] = {
+    ("TMA", "F1/16"): LeafProject(PROJECT_DIR / "tma.qgs"),
+    # ("TMA", "F7/16"): LeafProject(PROJECT_DIR / "tma_3600.qgs", primary=False),
+}
+
+# One entry per cov_layer code that combines several leaves (per
+# cov_layer_source) into its own rendered/composited tile set, published
+# under its own code. A layer that's just an alias for a single leaf (e.g.
+# a hypothetical "TMA 3600 MHz" pointing only at (TMA, F7/16)) does NOT
+# belong here — it needs no render of its own; api.layer_tileurl() resolves
+# it straight to that leaf's tiles.
+COMBINED_PROJECTS: dict[str, Path] = {
     # "@all": PROJECT_DIR / "all_operators.qgs",
-    # "F7_16_ALL": PROJECT_DIR / "f7_16_combo.qgs",
+    # "all3600mhz": PROJECT_DIR / "all3600mhz.qgs",
 }
 
 
@@ -201,19 +233,22 @@ def layer_dependencies(code: str) -> list[tuple[str, str]]:
 
 
 def build_targets() -> list[RenderTarget]:
-    """Join PROJECT_PATHS with the dependency graph from cov_layer_source.
-
-    Leaves (no dependencies) sort before targets that depend on them, so a
-    single sequential pass over the result renders a leaf and then whatever
-    combines it in the same run. Assumes a single dependency level (combined
-    layers depend only on leaves, not on other combined layers).
+    """Leaf targets from LEAF_PROJECTS, then combined targets from
+    COMBINED_PROJECTS joined with their dependency graph from
+    cov_layer_source. Leaves first so a single sequential pass renders a
+    leaf and then whatever combines it in the same run. Assumes a single
+    dependency level (combined layers depend only on leaves, not on other
+    combined layers).
     """
-    targets = [
-        RenderTarget(code, layer_reference(code) or "", path, tuple(layer_dependencies(code)))
-        for code, path in PROJECT_PATHS.items()
+    leaves = [
+        RenderTarget(operator, reference, leaf.project_path, (), leaf.primary)
+        for (operator, reference), leaf in LEAF_PROJECTS.items()
     ]
-    targets.sort(key=lambda t: bool(t.depends_on))
-    return targets
+    combined = [
+        RenderTarget(code, layer_reference(code) or "", path, tuple(layer_dependencies(code)))
+        for code, path in COMBINED_PROJECTS.items()
+    ]
+    return leaves + combined
 
 
 def register_tileurl(operator: str, reference: str, rfc_date: str, in_all: bool) -> bool:

@@ -67,6 +67,11 @@ map $http_accept_language $accept_language {
                 proxy_pass http://127.0.0.1:3000/rpc/cov_layer;
         }
 
+	# endpoint /rpc/layer_tileurl (new — replaces /api/tileurl?operator=eq... for the frontend's map overlay)
+        location /api/rpc/layer_tileurl  {
+                proxy_pass http://127.0.0.1:3000/rpc/layer_tileurl;
+        }
+
 	# background map using cache
 	location /basemap/ {
 		add_header X-License 'geoland.at - Creative Commons Namensnennung 4.0 International';

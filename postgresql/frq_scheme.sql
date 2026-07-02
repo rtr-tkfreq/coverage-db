@@ -257,13 +257,21 @@ ALTER TABLE api.layer_obligations OWNER TO postgres;
 --
 -- Name: cov_layer(double precision, double precision, character varying); Type: FUNCTION; Schema: api; Owner: postgres
 --
--- Point-info lookup for a *selected layer* (leaf or combined), replacing
--- per-operator/-reference filtering with resolution through cov_layer_source:
--- a combined layer's rows in cov_layer_source list every (source, reference)
--- it's built from; a leaf with no cov_layer_source rows resolves to itself,
--- using its own cov_layer.reference. This is what lets one function serve
--- "@all" (every operator's canonical reference), a single operator, and a
--- combined layer like an F7/16 combo of several operators uniformly.
+-- Point-info lookup for a selected layer — resolves purely via
+-- cov_layer_source, no special-casing for "leaf vs combined": every
+-- selectable cov_layer row, including a plain single-operator one like
+-- 'TMA', has its own cov_layer_source row(s) pointing at the actual
+-- (operator, reference) it reads from cov_mno. This is what lets a second
+-- reference of the same operator (e.g. TMA's F7/16) become its own
+-- independently selectable layer with a distinct code — there is no longer
+-- an assumption that cov_layer.code equals cov_mno.operator.
+--
+-- cov_mno is never pruned — it accumulates every historical rfc_date an
+-- operator has ever published for a raster cell, not just the current one.
+-- current_tileurl pins each (operator, reference) to its most recently
+-- published date (from tileurl, which is similarly append-only) so this
+-- only ever returns the data matching what's currently rendered as a tile
+-- overlay, not the full history.
 
 CREATE FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
     LANGUAGE plpgsql
@@ -273,11 +281,14 @@ BEGIN
    WITH resolved AS (
        SELECT cls.source AS operator, cls.reference AS reference
          FROM public.cov_layer_source cls WHERE cls.layer = cov_layer
-       UNION ALL
-       SELECT cl.code, cl.reference
-         FROM public.cov_layer cl
-        WHERE cl.code = cov_layer
-          AND NOT EXISTS (SELECT 1 FROM public.cov_layer_source cls2 WHERE cls2.layer = cov_layer)
+   ),
+   current_tileurl AS (
+       -- api.tileurl (the view), not the base table: views run with their
+       -- owner's privileges, so this needs no extra grant to web_anon —
+       -- same trick production's existing api.cov() overloads already use.
+       SELECT tu.operator, tu.reference, max(tu.date) AS date
+         FROM api.tileurl tu
+        GROUP BY tu.operator, tu.reference
    )
    SELECT
           coalesce(vn.visible_name, m.operator)::VARCHAR AS operator,
@@ -295,6 +306,7 @@ BEGIN
           ST_Y(ST_Centroid(ST_Transform(m.geom, 4326)))
      FROM public.cov_mno m
      JOIN resolved r ON r.operator = m.operator AND r.reference = m.reference
+     JOIN current_tileurl t ON t.operator = m.operator AND t.reference = m.reference AND t.date = m.rfc_date::date
      LEFT JOIN public.cov_visible_name vn ON vn.operator = m.operator
     WHERE ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint(cov_longitude::FLOAT, cov_latitude::FLOAT), 4326), 3857)), m.geom)
     ORDER BY m.dl_normal DESC;
@@ -303,6 +315,41 @@ $_$;
 
 
 ALTER FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) OWNER TO postgres;
+
+--
+-- Name: layer_tileurl(character varying); Type: FUNCTION; Schema: api; Owner: postgres
+--
+-- Tile-overlay lookup for a selected layer, replacing the frontend's old
+-- `tileurl?operator=eq.<code>` REST filter (which only works when the
+-- layer's code IS the tileurl.operator, no longer a safe assumption).
+-- Two cases, picked automatically by whether the layer has its own
+-- published tiles:
+--   1. The layer has its own tileurl row(s) (a real render under its own
+--      code — every multi-source combined layer works this way, e.g.
+--      '@all'/'all3600mhz', since compositing several operators' coverage
+--      needs its own cartography, not just a pointer to one of them).
+--   2. It doesn't — meaning it's a pure alias for a single underlying
+--      (operator, reference), like a hypothetical "TMA 3600 MHz" pointing
+--      at TMA's F7/16 data: no separate render exists or is needed, this
+--      just resolves straight to that source's own tiles via
+--      cov_layer_source.
+
+CREATE FUNCTION api.layer_tileurl(cov_layer character varying) RETURNS TABLE(operator character varying, reference character varying, date date, url character varying)
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT operator, reference, date, url FROM api.tileurl WHERE operator = cov_layer
+    UNION ALL
+    SELECT t.operator, t.reference, t.date, t.url
+      FROM public.cov_layer_source cls
+      JOIN api.tileurl t ON t.operator = cls.source AND t.reference = cls.reference
+     WHERE cls.layer = cov_layer
+       AND NOT EXISTS (SELECT 1 FROM api.tileurl WHERE operator = cov_layer)
+    ORDER BY date DESC
+    LIMIT 1;
+$$;
+
+
+ALTER FUNCTION api.layer_tileurl(cov_layer character varying) OWNER TO postgres;
 
 --
 -- Name: tileurl; Type: TABLE; Schema: public; Owner: postgres
@@ -645,6 +692,12 @@ GRANT SELECT ON TABLE api.layer_obligations TO web_anon;
 
 GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying) TO web_anon;
 
+--
+-- Name: FUNCTION layer_tileurl(character varying); Type: ACL; Schema: api; Owner: postgres
+--
+
+GRANT EXECUTE ON FUNCTION api.layer_tileurl(character varying) TO web_anon;
+
 -- Plain PL/pgSQL functions run as INVOKER by default (unlike views, which
 -- run as their owner) — api.cov_layer()'s body queries these public-schema
 -- tables directly, so web_anon needs SELECT on them too, or every call
@@ -655,9 +708,18 @@ GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, char
 GRANT SELECT ON TABLE public.cov_layer TO web_anon;
 GRANT SELECT ON TABLE public.cov_layer_source TO web_anon;
 
--- cov_layer_obligation has no such requirement: only queried via the
--- api.layer_obligations VIEW, and views run as their owner (postgres) by
--- default, so the view-level grant above is sufficient on its own.
+-- cov_layer_obligation has no such requirement for web_anon: only queried
+-- via the api.layer_obligations VIEW, and views run as their owner
+-- (postgres) by default, so the view-level grant above is sufficient there.
+
+-- qgis needs full CRUD on the layer catalog too — same treatment as
+-- setting_options/tileurl above: QGIS Desktop is used directly to
+-- add/edit cov_layer(_source) rows, and a combined layer's QGIS project SQL
+-- can query cov_layer_source itself to know which operators to include
+-- (self-updating, same pattern tma.qgs already uses for rfc_date).
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.cov_layer TO qgis;
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.cov_layer_source TO qgis;
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.cov_layer_obligation TO qgis;
 -- cov_render_tiles.py's own reads of cov_layer/cov_layer_source run as the
 -- postgres OS user / superuser via peer auth, so need no explicit grant
 -- either way.

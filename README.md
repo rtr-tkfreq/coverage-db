@@ -69,9 +69,9 @@ of three particular operators) is a few `INSERT`s, not a code change:
 
 ```sql
 INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
-  VALUES ('F7_16_ALL', 'F7/16', 'Kombiniert (F7/16)', false, 99);
-INSERT INTO cov_layer_source (layer, source)
-  VALUES ('F7_16_ALL', 'A1TA'), ('F7_16_ALL', 'TMA'), ('F7_16_ALL', 'H3A');
+  VALUES ('all3600mhz', 'F7/16', 'Alle 3600 MHz', false, 99);
+INSERT INTO cov_layer_source (layer, source, reference)
+  VALUES ('all3600mhz', 'A1TA', 'F7/16'), ('all3600mhz', 'TMA', 'F7/16'), ('all3600mhz', 'H3A', 'F7/16');
 ```
 
 `cov_layer_source` is only consumed server-side, by `cov_render_tiles.py`
@@ -122,26 +122,34 @@ parse, no `null` standing in for a magic string.
 2. Anything kept gets imported into `cov_mno` via `COPY`, then geometry is
    backfilled from `atraster` by matching `cov_mno.raster`. If nothing was
    new, the run exits without touching the database at all.
-3. `cov_render_tiles.py` runs on its own, independent schedule. It builds its
-   list of render targets by joining a local map of "layer code → QGIS
-   project file" (`PROJECT_PATHS`) with the dependency graph from
-   `cov_layer_source`, leaves first. **The condition that triggers a
-   render**:
-   - for a **leaf** layer, it looks for the newest `rfc_date` in `cov_mno`
-     for that operator/reference that does **not** already have a matching
-     row in `tileurl`;
-   - for a **derived** layer, it looks at whether any of its dependencies'
+3. `cov_render_tiles.py` runs on its own, independent schedule. It builds two
+   kinds of render targets: leaves (`LEAF_PROJECTS`, one per real
+   `(operator, reference)` pair, reading `cov_mno` directly) and combined
+   layers (`COMBINED_PROJECTS`, one per `cov_layer` code that genuinely
+   composites several operators, e.g. `all3600mhz` — its dependency graph
+   comes from `cov_layer_source`). **The condition that triggers a render**:
+   - for a **leaf**, it looks for the newest `rfc_date` in `cov_mno` for
+     that operator/reference that does **not** already have a matching row
+     in `tileurl`;
+   - for a **combined** layer, it looks at whether any of its dependencies'
      latest `tileurl` date is newer than its own latest `tileurl` date; its
      rfc_date is the max across its dependencies.
-   Either way, if there's nothing new, that layer is skipped.
+   Either way, if there's nothing new, that target is skipped. A `cov_layer`
+   selection that's just an alias for a single leaf (e.g. a second reference
+   of an operator that already has one) needs neither kind of target at all
+   — nothing to render, it reuses the leaf's own tiles (see step 5).
 4. When there is unrendered data, it runs `qgis_process` headlessly against
-   that layer's project (whose SQL always selects `MAX(rfc_date)` itself, so
-   no per-run file patching is needed), moves the tiles under
-   `/var/www/tiles/cov/<LAYER>/<REFERENCE>/<DATE>/`, and inserts the
-   corresponding `tileurl` row.
-5. From that point on, nginx serves the new tiles directly as static files,
-   and PostgREST's `/tileurl` endpoint immediately reflects the new date —
-   the frontend picks it up on its next request, no further steps needed.
+   that target's project (whose SQL always selects `MAX(rfc_date)` itself,
+   so no per-run file patching is needed), moves the tiles under
+   `/var/www/tiles/cov/<OPERATOR-OR-CODE>/<REFERENCE>/<DATE>/`, and inserts
+   the corresponding `tileurl` row.
+5. From that point on, nginx serves the new tiles directly as static files.
+   The frontend never queries `tileurl` by operator code directly — it calls
+   `api.layer_tileurl(cov_layer)`, which resolves any selected layer to the
+   right tiles: its own `tileurl` row if it has one (leaves and combined
+   layers both do), or — for a pure alias with no render of its own —
+   straight through to its single source's tiles via `cov_layer_source`. No
+   further steps needed once a render completes.
 
 Because leaf targets are always resolved before targets that depend on them,
 and everything in `cov_render_tiles.py` runs strictly sequentially — by
@@ -230,9 +238,10 @@ section; it won't apply again.
    instead of being hardcoded per `type`). **This step is the one that
    requires the migration to have already run** — the new frontend 404s
    against `/api/layers` if Part 1+2 hasn't been applied yet.
-4. Update nginx: `/api/layers`, `/api/layer_obligations`, and
-   `/api/rpc/cov_layer` need their own `location` blocks (see
-   `nginx/example.com` — they're new, added alongside this change).
+4. Update nginx: `/api/layers`, `/api/layer_obligations`,
+   `/api/rpc/cov_layer`, and `/api/rpc/layer_tileurl` need their own
+   `location` blocks (see `nginx/example.com` — they're new, added alongside
+   this change).
    `/api/rpc/id` was also missing a block in the checked-in fragment despite
    the frontend already calling it; a block was added for it too — confirm
    whether production nginx already has it under config not reflected in
@@ -293,7 +302,17 @@ curl 'https://frq.rtr.at/api/layer_obligations?layer=eq.TMA'
 # works for any selected layer via cov_layer_source resolution
 curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=%40all'   # %40 = '@'
 curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=TMA'
-curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=F7_16_ALL'  # once its QGIS project + rendering exist
+curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=all3600mhz'
+
+# replaces /api/tileurl?operator=eq... for the frontend's map overlay —
+# resolves any selected layer to its own tiles if it has them, else falls
+# through to its single source's tiles (a pure alias with no render of its own)
+curl 'https://frq.rtr.at/api/rpc/layer_tileurl?cov_layer=TMA'
+curl 'https://frq.rtr.at/api/rpc/layer_tileurl?cov_layer=all3600mhz'
+# returns [] (empty array, not an error) if nothing has ever been rendered
+# for that layer OR any of its sources yet — that's the "map doesn't
+# update when I select this layer" symptom, and it's expected until a real
+# render exists somewhere in the resolution chain
 ```
 
 **Checklist after running the migration on production:**
@@ -306,11 +325,22 @@ curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.2
    array-wrapped) `label_de`/`label_en`, including the A1TA/TMA `kg` rows
    that had the buggy shape in the source JSON.
 3. `SELECT * FROM cov_layer_source WHERE layer = '@all' ORDER BY source;` —
-   exactly the real operator list, each at its correct reference.
+   exactly the real operator list, each at its correct reference. Also check
+   `SELECT * FROM cov_layer_source WHERE layer = source;` — every real
+   operator should have a self-referencing row (layer=source=its own code);
+   without one, plain single-operator selection returns no point-info at all
+   (`api.cov_layer()` has no leaf/combined special case, it resolves purely
+   through `cov_layer_source`).
 4. `/api/rpc/cov_layer?...&cov_layer=%40all` at a point with known
    multi-operator coverage returns one row per operator, matching what
    `/api/rpc/cov` (old, no operator param) returns for the same point.
-5. `/api/settings` and `/api/rpc/cov` (old ones) still work unchanged —
+5. `/api/rpc/layer_tileurl?cov_layer=<code>` returns a non-empty array for
+   every layer that has ever had a render — either its own or, for a pure
+   alias, its single source's. An empty result for a layer you expect to
+   have tiles means nothing has actually been rendered anywhere in its
+   resolution chain yet — check `tileurl` directly for the relevant
+   operator/reference before assuming the API is broken.
+6. `/api/settings` and `/api/rpc/cov` (old ones) still work unchanged —
    confirms an old frontend, if still deployed anywhere, isn't broken.
 
 ## License

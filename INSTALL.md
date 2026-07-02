@@ -351,8 +351,12 @@ curl -I http://localhost/cov/TMA/F1_16/<date>/4/8/5.png
   `(operator, reference, raster, rfc_date)` to reject actual duplicates.
 - Both scripts support `-q`/`-qq` for quieter cron output; `-qq` suppresses
   even failure details (exit code still reflects failures).
-- `cov_render_tiles.py`'s `PROJECT_PATHS` dict currently only has one entry
-  (`TMA`, using `tma.qgs`). Add an entry + a matching `.qgs` project file for
-  each additional layer you want automated rendering for — its `cov_layer`
-  row (reference, and any `cov_layer_source` dependencies) is picked up from
-  the database automatically.
+- `cov_render_tiles.py`'s `LEAF_PROJECTS` dict currently only has one entry
+  (`(TMA, F1/16)`, using `tma.qgs`) — add an entry + matching `.qgs` project
+  file for each additional real (operator, reference) you want automated
+  rendering for. `COMBINED_PROJECTS` is for layers that genuinely composite
+  several operators (e.g. `all3600mhz`) — a layer that's just an alias for a
+  single existing leaf (e.g. a second reference of an operator that already
+  has one) needs neither: `api.layer_tileurl()` resolves it straight to that
+  leaf's tiles automatically once the corresponding `cov_layer_source` row
+  exists.
