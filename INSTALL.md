@@ -164,6 +164,20 @@ echo "127.0.0.1:5432:frq:qgis:qgispassword" >> ~/.pgpass   # run as the postgres
 chmod 600 ~/.pgpass
 ```
 
+`frq_scheme.sql` creates `cov_layer`/`cov_layer_source`/`cov_layer_obligation`
+(the layer catalog — see README.md) but doesn't seed them; a fresh install
+has no selectable layers until you add some:
+
+```sql
+INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
+  VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1);
+INSERT INTO cov_layer_source (layer, source) VALUES ('@all', 'TMA');
+```
+
+(If you're migrating an existing installation that already has data in
+`setting_options`, use `postgresql/migrate_cov_layer.sql` instead — see
+README.md's migration section.)
+
 ## 6. Populate `atraster` (the national 100m raster grid)
 
 This is what `cov_mno.raster` joins against to get a geometry. One-time,
@@ -337,7 +351,8 @@ curl -I http://localhost/cov/TMA/F1_16/<date>/4/8/5.png
   `(operator, reference, raster, rfc_date)` to reject actual duplicates.
 - Both scripts support `-q`/`-qq` for quieter cron output; `-qq` suppresses
   even failure details (exit code still reflects failures).
-- `cov_render_tiles.py`'s `TARGETS` list currently only has one entry (TMA
-  F1/16, using `tma.qgs`). Add a `RenderTarget` + a matching `.qgs` project
-  file for each additional operator/reference you want automated rendering
-  for.
+- `cov_render_tiles.py`'s `PROJECT_PATHS` dict currently only has one entry
+  (`TMA`, using `tma.qgs`). Add an entry + a matching `.qgs` project file for
+  each additional layer you want automated rendering for — its `cov_layer`
+  row (reference, and any `cov_layer_source` dependencies) is picked up from
+  the database automatically.

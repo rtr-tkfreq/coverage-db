@@ -10,6 +10,9 @@ be found in a separate repository at
   operator/reference/rfc_date/raster cell) and the reference raster grid
   (`atraster`: the national 100m grid, `cov_mno.raster` joins against it to
   get a geometry).
+* **`cov_layer` / `cov_layer_source` / `cov_layer_obligation`** — the map's
+  layer catalog: which layers exist, how they're linked, what they're
+  called. See "The layer catalog" below.
 * **`cov_download_mno.py`** (`scripts/import-opendata/`) — downloads each
   operator's open-data CSV, compares it against previous runs, discards
   anything unchanged (operators publish updates roughly every 3 months, so
@@ -21,17 +24,95 @@ be found in a separate repository at
   for **hours** for a full-country render, which is why it's a separate job
   from the download/import step rather than a step chained onto it.
 * **QGIS** — owns the actual cartography (color ramps, symbology) via a
-  project file per operator/reference (e.g. `tma.qgs` for TMA F1/16).
+  project file per layer (e.g. `tma.qgs` for the `TMA` layer).
   `cov_render_tiles.py` drives it headlessly through `qgis_process`, so the
   rendered output matches what you'd get from QGIS Desktop's "Raster
   Tools → Generate XYZ Tiles (Directory)" — same algorithm, just scripted.
 * **PostgREST** — exposes a REST API (schema `api`) over the database:
-  `settings`, `tileurl` (which tile set is current for a given
-  operator/reference), and the `cov()` lookup function the frontend uses for
-  point queries.
+  `layers`, `layer_obligations`, `tileurl` (which tile set is current for a
+  given layer), and the `cov()` lookup function the frontend uses for point
+  queries.
 * **nginx** — serves the rendered tiles as static files from
   `/var/www/tiles`, and reverse-proxies the PostgREST API and the basemap.at
   background map.
+
+## The layer catalog
+
+Every selectable thing on the map — a real operator's coverage, or a layer
+combining several operators — is a row in `cov_layer`. There's no separate
+concept for "real" vs. "combined": a combined layer is just a `cov_layer` row
+that also has rows in `cov_layer_source` pointing at the layers it's built
+from.
+
+```sql
+-- cov_layer: one row per selectable layer
+ code  | reference | visible_name           | is_default | sort_order
+-------+-----------+-------------------------+------------+------------
+ @all  |           | @all                    | t          | 0
+ TMA   | F1/16     | T-Mobile Austria GmbH   | f          | 1
+ A1TA  | F1/16     | A1 Telekom Austria AG   | f          | 2
+ H3A   | F1/16     | Hutchison Drei Austria  | f          | 3
+
+-- cov_layer_source: which layers a combined layer is built from
+ layer | source
+-------+--------
+ @all  | TMA
+ @all  | A1TA
+ @all  | H3A
+```
+
+A layer with no rows in `cov_layer_source` (as `layer`) is a leaf — rendered
+directly from `cov_mno`. A layer that *does* have rows there is derived — its
+QGIS project combines the listed layers instead of reading `cov_mno`
+directly. Adding a new combined layer (e.g. a specific-reference combination
+of three particular operators) is a few `INSERT`s, not a code change:
+
+```sql
+INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
+  VALUES ('F7_16_ALL', 'F7/16', 'Kombiniert (F7/16)', false, 99);
+INSERT INTO cov_layer_source (layer, source)
+  VALUES ('F7_16_ALL', 'A1TA'), ('F7_16_ALL', 'TMA'), ('F7_16_ALL', 'H3A');
+```
+
+`cov_layer_source` is only consumed server-side, by `cov_render_tiles.py`
+(see below) — it's not exposed via the `api` schema, since which layers
+*depend* on which is a rendering-orchestration detail, not something the
+frontend needs.
+
+**Obligation overlays** (e.g. "which cadastral communities is this operator
+obligated to cover, and by when") are a second kind of overlay, tracked in
+`cov_layer_obligation` and exposed as `api.layer_obligations`:
+
+```sql
+-- cov_layer_obligation: one row per (layer, obligation type)
+ layer | type      | label_de            | label_en               | source
+-------+-----------+---------------------+-------------------------+---------------------------------
+ TMA   | kg        | Katastralgemeinden  | Cadastral communities   | {/obligations/kg/TMA/2025-12-31}
+ TMA   | roads_bl  | Straßen B/L         | Streets B/L             | {/obligations/roads_bl}
+ @all  | kg        | Katastralgemeinden  | Cadastral communities   | {/obligations/kg/A1TA/..., /obligations/kg/H3A/..., /obligations/kg/TMA/...}
+```
+
+`source` holds XYZ tile directory paths, same shape as `tileurl.url` — an
+obligation overlay is rendered and served exactly like a coverage layer, just
+from a different docroot subtree. Two different things share this table:
+operator-and-date-specific obligations (`kg`, one dated tile set per
+operator, with `@all`'s row overlaying every operator's own tile set at
+once), and static reference overlays with no operator- or date-specificity
+at all (`roads_bl`/`cities`/`motorways`/`railways` — same `source` on every
+layer's row; currently stored once per layer, matching how the old JSON
+represented it, not deduplicated into a single shared row).
+
+`label_de`/`label_en` are real backend-owned display text, not placeholders —
+the frontend reads them directly (via Angular's `LOCALE_ID`, since this app
+is compiled once per locale rather than switching language at runtime; see
+`frqmap.component.ts`) instead of hardcoding its own translation per
+obligation `type`, which is what it did before this change and which had
+already drifted from the backend's actual wording in a few cases.
+
+The frontend reads `api.layers` (ordered by `sort_order`) to build its
+operator selector, and `api.layer_obligations` for the obligation overlay
+dropdown and its labels — both flat, ordinary REST resources; no JSON blob to
+parse, no `null` standing in for a magic string.
 
 ## How data flows from "operator publishes an update" to "map shows it"
 
@@ -41,30 +122,32 @@ be found in a separate repository at
 2. Anything kept gets imported into `cov_mno` via `COPY`, then geometry is
    backfilled from `atraster` by matching `cov_mno.raster`. If nothing was
    new, the run exits without touching the database at all.
-3. `cov_render_tiles.py` runs on its own, independent schedule. **The
-   condition that triggers a render**: for each configured
-   (operator, reference) pair, it looks for the newest `rfc_date` in
-   `cov_mno` that does **not** already have a matching row in `tileurl`. If
-   every known `rfc_date` already has a `tileurl` entry, that
-   operator/reference is skipped — nothing to do.
-4. When there is an unrendered date, it patches that operator's QGIS project
-   with the right `rfc_date` filter, runs `qgis_process` headlessly to
-   produce XYZ tiles, moves them under `/var/www/tiles/cov/<OPERATOR>/<REFERENCE>/<DATE>/`,
-   and inserts the corresponding `tileurl` row.
+3. `cov_render_tiles.py` runs on its own, independent schedule. It builds its
+   list of render targets by joining a local map of "layer code → QGIS
+   project file" (`PROJECT_PATHS`) with the dependency graph from
+   `cov_layer_source`, leaves first. **The condition that triggers a
+   render**:
+   - for a **leaf** layer, it looks for the newest `rfc_date` in `cov_mno`
+     for that operator/reference that does **not** already have a matching
+     row in `tileurl`;
+   - for a **derived** layer, it looks at whether any of its dependencies'
+     latest `tileurl` date is newer than its own latest `tileurl` date; its
+     rfc_date is the max across its dependencies.
+   Either way, if there's nothing new, that layer is skipped.
+4. When there is unrendered data, it runs `qgis_process` headlessly against
+   that layer's project (whose SQL always selects `MAX(rfc_date)` itself, so
+   no per-run file patching is needed), moves the tiles under
+   `/var/www/tiles/cov/<LAYER>/<REFERENCE>/<DATE>/`, and inserts the
+   corresponding `tileurl` row.
 5. From that point on, nginx serves the new tiles directly as static files,
    and PostgREST's `/tileurl` endpoint immediately reflects the new date —
    the frontend picks it up on its next request, no further steps needed.
 
-Some layers are **derived** from other operators' data instead of reading
-`cov_mno` directly (e.g. a combined "all operators" layer, or a layer
-combining one reference band across several specific operators). These are
-declared via `RenderTarget.depends_on` in `cov_render_tiles.py`: a derived
-target's own "is there new data" check is "does any dependency have a newer
-rendered date than I do", and its rfc_date is the max across its
-dependencies. List derived targets after their dependencies in `TARGETS` —
-everything still runs strictly sequentially (no parallel rendering, by
-design), so one run picks up a leaf render and its dependent combined render
-in the same pass.
+Because leaf targets are always resolved before targets that depend on them,
+and everything in `cov_render_tiles.py` runs strictly sequentially — by
+design, never in parallel — a single run started after several operators
+publish updates at once correctly renders each changed leaf and then
+whatever combined layer depends on them, in one pass.
 
 ## Full automation
 
@@ -105,6 +188,130 @@ Either way, populating `atraster` (the national raster grid) is a manual,
 one-time step in both paths — it uses `shp2pgsql -d`, which drops and
 recreates the table, so it's deliberately not something either the Ansible
 playbook or a systemd timer does automatically against a live database.
+
+## Migrating an existing (pre-`cov_layer`) installation
+
+Everything above describes the current setup. If you're bringing an
+**existing** production database up to it — one still running the old
+`setting_options`-JSON-blob approach — do this once, then delete this
+section; it won't apply again.
+
+1. Run **Part 1 + Part 2** of `postgresql/migrate_cov_layer.sql` against
+   production. This is purely additive: it creates
+   `cov_layer`/`cov_layer_source`/`cov_layer_obligation` and `api.layers`/
+   `api.layer_obligations` alongside the existing tables, and populates them
+   by reading `setting_options.filter` — translating the old `operator: null`
+   sentinel to the explicit code `'@all'` (matching what `tileurl.operator`
+   already used), and each operator's nested `obligations` into
+   `cov_layer_obligation` including their `label_de`/`label_en` (handled
+   defensively — a couple of rows in the source data have `label` wrapped in
+   a stray one-element array instead of a plain object; the migration
+   normalizes both shapes the same way). **It does not touch or drop
+   `setting_options`/`api.settings`.** The old frontend keeps working exactly
+   as before, unmodified and unaware any of this happened — it never queries
+   `/api/layers`, and `/api/settings` isn't touched until Part 3. Safe to run
+   this step with the old frontend still live in production.
+   One caveat for the transition window: this is a one-time snapshot, not a
+   sync — if `setting_options.filter` is edited after running Part 1+2 (e.g.
+   an operator added by hand), that edit won't appear in `cov_layer`
+   automatically. Make new edits against `cov_layer`/`cov_layer_source`/
+   `cov_layer_obligation` directly once you've migrated, not the old table.
+2. It also best-effort populates `cov_layer_source` for `@all`, assuming
+   every real operator contributes (the old schema had no explicit record of
+   this — it only lived in the undocumented `tileurl.in_all` flag). Check
+   `SELECT * FROM cov_layer_source WHERE layer = '@all';` against whatever
+   `tileurl.in_all` says on production and adjust if any operator should be
+   excluded.
+3. Deploy the coverage-website build that reads `/api/layers` and
+   `/api/layer_obligations` instead of `/api/settings` (already the current
+   state of that repo as of this change — no `operator: null` handling left,
+   `Operator` was renamed `Layer` throughout `frqmap.component.ts`/`.html`/
+   `models.ts`, and obligation labels now come from `label_de`/`label_en`
+   instead of being hardcoded per `type`). **This step is the one that
+   requires the migration to have already run** — the new frontend 404s
+   against `/api/layers` if Part 1+2 hasn't been applied yet.
+4. Update nginx: `/api/layers`, `/api/layer_obligations`, and
+   `/api/rpc/cov_layer` need their own `location` blocks (see
+   `nginx/example.com` — they're new, added alongside this change).
+   `/api/rpc/id` was also missing a block in the checked-in fragment despite
+   the frontend already calling it; a block was added for it too — confirm
+   whether production nginx already has it under config not reflected in
+   this repo before assuming it was actually missing.
+5. Once the new frontend is live and verified, run **Part 3** of
+   `postgresql/migrate_cov_layer.sql` (commented out by default — run it by
+   hand) to drop `setting_options`, `api.settings`, and
+   `setting_options_uid_seq`. This is the one step that breaks the *old*
+   frontend, so don't run it until nothing is still pointed at the old build.
+6. Delete this section from the README.
+
+### Verifying the migration: all endpoints
+
+Every endpoint the site depends on, with example requests against
+`frq.rtr.at`, so the migration can be checked endpoint-by-endpoint rather
+than just "the page loads." **Existing** ones are untouched by this
+migration (nothing here was modified); **new** ones only exist once
+`migrate_cov_layer.sql` and the nginx update above have both been applied.
+
+**Existing:**
+
+```bash
+# old settings blob — stays live until Part 3 drops it
+curl 'https://frq.rtr.at/api/settings'
+
+# tile layer list — unaffected by this migration
+curl 'https://frq.rtr.at/api/tileurl'
+curl 'https://frq.rtr.at/api/tileurl?operator=eq.TMA&order=date.desc&limit=1'
+
+# old point-info (in_all-based), five overloads picked by which params are sent
+curl 'https://frq.rtr.at/api/rpc/cov?cov_longitude=16.37&cov_latitude=48.20'
+curl 'https://frq.rtr.at/api/rpc/cov?cov_longitude=16.37&cov_latitude=48.20&cov_operator=TMA&cov_reference=F1%2F16'
+
+# geographic/administrative info for a point (used by the frontend already)
+curl 'https://frq.rtr.at/api/rpc/id?cov_longitude=16.37&cov_latitude=48.20'
+
+# 250m raster reverse lookup, not called by the frontend as far as known
+curl 'https://frq.rtr.at/api/rpc/r250?cov_r250=<raster250-id>'
+
+# tiles are static files, not PostgREST — '@' stripped, 'any' for no reference
+curl -I 'https://frq.rtr.at/cov/TMA/F1_16/2026-06-21/4/8/5.png'
+curl -I 'https://frq.rtr.at/cov/all/any/2026-06-21/4/8/5.png'
+```
+
+**New:**
+
+```bash
+# replaces /api/settings' operator list — flat, ordered
+curl 'https://frq.rtr.at/api/layers?order=sort_order.asc'
+# expect rows like: {"code":"TMA","reference":"F1/16","visible_name":"T-Mobile Austria GmbH","is_default":false,"sort_order":2}
+
+# replaces /api/settings' nested obligations arrays
+curl 'https://frq.rtr.at/api/layer_obligations'
+curl 'https://frq.rtr.at/api/layer_obligations?layer=eq.TMA'
+# expect rows like: {"layer":"TMA","type":"kg","label_de":"Katastralgemeinden","label_en":"Cadastral communities","source":["/obligations/kg/TMA/2025-12-31"]}
+
+# replaces /api/rpc/cov for the frontend's point-info click — one function,
+# works for any selected layer via cov_layer_source resolution
+curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=%40all'   # %40 = '@'
+curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=TMA'
+curl 'https://frq.rtr.at/api/rpc/cov_layer?cov_longitude=16.37&cov_latitude=48.20&cov_layer=F7_16_ALL'  # once its QGIS project + rendering exist
+```
+
+**Checklist after running the migration on production:**
+
+1. `/api/layers?order=sort_order.asc` returns every real operator (not just
+   what's in this repo's sample data), correct `is_default`, and `reference`
+   set to F1/16 for A1TA/TMA/H3A and F7/16 for the rest — verify any operator
+   not covered by that split explicitly.
+2. `/api/layer_obligations` returns every obligation with a clean (not
+   array-wrapped) `label_de`/`label_en`, including the A1TA/TMA `kg` rows
+   that had the buggy shape in the source JSON.
+3. `SELECT * FROM cov_layer_source WHERE layer = '@all' ORDER BY source;` —
+   exactly the real operator list, each at its correct reference.
+4. `/api/rpc/cov_layer?...&cov_layer=%40all` at a point with known
+   multi-operator coverage returns one row per operator, matching what
+   `/api/rpc/cov` (old, no operator param) returns for the same point.
+5. `/api/settings` and `/api/rpc/cov` (old ones) still work unchanged —
+   confirms an old frontend, if still deployed anywhere, isn't broken.
 
 ## License
 

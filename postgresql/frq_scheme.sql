@@ -162,31 +162,147 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
--- Name: setting_options; Type: TABLE; Schema: public; Owner: postgres
+-- Name: cov_layer; Type: TABLE; Schema: public; Owner: postgres
 --
+-- One row per selectable map layer: a real operator (code matches
+-- cov_mno.operator/tileurl.operator directly, e.g. 'TMA') or a combined/
+-- derived layer (e.g. '@all', or a specific-reference multi-operator combo).
+-- reference is informational/NULL for layers that aren't pinned to one band.
 
-CREATE TABLE public.setting_options (
-    uid integer NOT NULL,
-    object character varying,
-    filter jsonb
+CREATE TABLE public.cov_layer (
+    code character varying NOT NULL,
+    reference character varying,
+    visible_name character varying NOT NULL,
+    is_default boolean DEFAULT false NOT NULL,
+    sort_order integer DEFAULT 0 NOT NULL
 );
 
 
-ALTER TABLE public.setting_options OWNER TO postgres;
+ALTER TABLE public.cov_layer OWNER TO postgres;
 
 --
--- Name: settings; Type: VIEW; Schema: api; Owner: postgres
+-- Name: cov_layer_source; Type: TABLE; Schema: public; Owner: postgres
+--
+-- Explicit dependency graph for combined layers: one row per (layer, source,
+-- reference) edge, meaning "layer includes source's data at this specific
+-- reference". `reference` is independent of source's own cov_layer.reference
+-- (its canonical/standalone reference) — e.g. A1TA's own listing uses
+-- F1/16, but a combined F7/16 layer depending on A1TA needs A1TA's F7/16
+-- data specifically, a different reference than A1TA's standalone one. A
+-- layer with no rows here is a leaf (rendered directly from cov_mno, using
+-- its own cov_layer.reference). Consumed by cov_render_tiles.py (render
+-- order/staleness) and api.cov_layer() (point-info resolution) — not
+-- exposed via the api schema itself, since the graph structure is an
+-- implementation detail, not something the frontend queries directly.
+CREATE TABLE public.cov_layer_source (
+    layer character varying NOT NULL,
+    source character varying NOT NULL,
+    reference character varying NOT NULL
+);
+
+
+ALTER TABLE public.cov_layer_source OWNER TO postgres;
+
+--
+-- Name: cov_layer_obligation; Type: TABLE; Schema: public; Owner: postgres
 --
 
-CREATE VIEW api.settings AS
- SELECT setting_options.uid,
-    setting_options.object,
-    setting_options.filter
-   FROM public.setting_options
-  WHERE (setting_options.uid = 1);
+-- Supply-obligation overlays for a layer, e.g. which cadastral communities
+-- (Katastralgemeinden) an operator is obligated to cover by what date.
+-- label_de/label_en are real backend-owned localized display text (not
+-- derived/guessed) — source: the old setting_options.filter JSON already
+-- carried this per obligation, the frontend just never read it and
+-- hardcoded its own (slightly different) German/English strings instead.
+CREATE TABLE public.cov_layer_obligation (
+    layer character varying NOT NULL,
+    type character varying NOT NULL,
+    label_de character varying NOT NULL,
+    label_en character varying NOT NULL,
+    source character varying[] NOT NULL
+);
 
 
-ALTER TABLE api.settings OWNER TO postgres;
+ALTER TABLE public.cov_layer_obligation OWNER TO postgres;
+
+--
+-- Name: layers; Type: VIEW; Schema: api; Owner: postgres
+--
+
+CREATE VIEW api.layers AS
+ SELECT cov_layer.code,
+    cov_layer.reference,
+    cov_layer.visible_name,
+    cov_layer.is_default,
+    cov_layer.sort_order
+   FROM public.cov_layer;
+
+
+ALTER TABLE api.layers OWNER TO postgres;
+
+--
+-- Name: layer_obligations; Type: VIEW; Schema: api; Owner: postgres
+--
+
+CREATE VIEW api.layer_obligations AS
+ SELECT cov_layer_obligation.layer,
+    cov_layer_obligation.type,
+    cov_layer_obligation.label_de,
+    cov_layer_obligation.label_en,
+    cov_layer_obligation.source
+   FROM public.cov_layer_obligation;
+
+
+ALTER TABLE api.layer_obligations OWNER TO postgres;
+
+--
+-- Name: cov_layer(double precision, double precision, character varying); Type: FUNCTION; Schema: api; Owner: postgres
+--
+-- Point-info lookup for a *selected layer* (leaf or combined), replacing
+-- per-operator/-reference filtering with resolution through cov_layer_source:
+-- a combined layer's rows in cov_layer_source list every (source, reference)
+-- it's built from; a leaf with no cov_layer_source rows resolves to itself,
+-- using its own cov_layer.reference. This is what lets one function serve
+-- "@all" (every operator's canonical reference), a single operator, and a
+-- combined layer like an F7/16 combo of several operators uniformly.
+
+CREATE FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
+    LANGUAGE plpgsql
+    AS $_$
+BEGIN
+   RETURN QUERY
+   WITH resolved AS (
+       SELECT cls.source AS operator, cls.reference AS reference
+         FROM public.cov_layer_source cls WHERE cls.layer = cov_layer
+       UNION ALL
+       SELECT cl.code, cl.reference
+         FROM public.cov_layer cl
+        WHERE cl.code = cov_layer
+          AND NOT EXISTS (SELECT 1 FROM public.cov_layer_source cls2 WHERE cls2.layer = cov_layer)
+   )
+   SELECT
+          coalesce(vn.visible_name, m.operator)::VARCHAR AS operator,
+          m.reference::VARCHAR,
+          m.license::VARCHAR,
+          m.rfc_date::VARCHAR AS last_updated,
+          m.raster::VARCHAR,
+          NULL::VARCHAR AS technology,
+          round(m.dl_max / 1000)::integer AS downloadKbitMax,
+          round(m.ul_max / 1000)::integer AS uploadKbitMax,
+          round(m.dl_normal / 1000)::integer AS downloadKbitNormal,
+          round(m.ul_normal / 1000)::integer AS uploadKbitNormal,
+          ST_AsGeoJSON(ST_Transform(m.geom, 4326)) AS geoJson,
+          ST_X(ST_Centroid(ST_Transform(m.geom, 4326))),
+          ST_Y(ST_Centroid(ST_Transform(m.geom, 4326)))
+     FROM public.cov_mno m
+     JOIN resolved r ON r.operator = m.operator AND r.reference = m.reference
+     LEFT JOIN public.cov_visible_name vn ON vn.operator = m.operator
+    WHERE ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint(cov_longitude::FLOAT, cov_latitude::FLOAT), 4326), 3857)), m.geom)
+    ORDER BY m.dl_normal DESC;
+END;
+$_$;
+
+
+ALTER FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) OWNER TO postgres;
 
 --
 -- Name: tileurl; Type: TABLE; Schema: public; Owner: postgres
@@ -331,28 +447,6 @@ ALTER SEQUENCE public.cov_visible_name_uid_seq OWNED BY public.cov_visible_name.
 
 
 --
--- Name: setting_options_uid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
---
-
-CREATE SEQUENCE public.setting_options_uid_seq
-    AS integer
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
-
-
-ALTER TABLE public.setting_options_uid_seq OWNER TO postgres;
-
---
--- Name: setting_options_uid_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: postgres
---
-
-ALTER SEQUENCE public.setting_options_uid_seq OWNED BY public.setting_options.uid;
-
-
---
 -- Name: tileurl_uid_seq; Type: SEQUENCE; Schema: public; Owner: postgres
 --
 
@@ -396,13 +490,6 @@ ALTER TABLE ONLY public.cov_visible_name ALTER COLUMN uid SET DEFAULT nextval('p
 
 
 --
--- Name: setting_options uid; Type: DEFAULT; Schema: public; Owner: postgres
---
-
-ALTER TABLE ONLY public.setting_options ALTER COLUMN uid SET DEFAULT nextval('public.setting_options_uid_seq'::regclass);
-
-
---
 -- Name: tileurl uid; Type: DEFAULT; Schema: public; Owner: postgres
 --
 
@@ -439,6 +526,54 @@ ALTER TABLE ONLY public.cov_visible_name
 
 ALTER TABLE ONLY public.cov_mno
     ADD CONSTRAINT operator_reference_raster_rfc_date_id UNIQUE (operator, reference, raster, rfc_date);
+
+
+--
+-- Name: cov_layer cov_layer_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer
+    ADD CONSTRAINT cov_layer_pkey PRIMARY KEY (code);
+
+
+--
+-- Name: cov_layer_source cov_layer_source_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer_source
+    ADD CONSTRAINT cov_layer_source_pkey PRIMARY KEY (layer, source, reference);
+
+
+--
+-- Name: cov_layer_source cov_layer_source_layer_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer_source
+    ADD CONSTRAINT cov_layer_source_layer_fkey FOREIGN KEY (layer) REFERENCES public.cov_layer(code);
+
+
+--
+-- Name: cov_layer_source cov_layer_source_source_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer_source
+    ADD CONSTRAINT cov_layer_source_source_fkey FOREIGN KEY (source) REFERENCES public.cov_layer(code);
+
+
+--
+-- Name: cov_layer_obligation cov_layer_obligation_pkey; Type: CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer_obligation
+    ADD CONSTRAINT cov_layer_obligation_pkey PRIMARY KEY (layer, type);
+
+
+--
+-- Name: cov_layer_obligation cov_layer_obligation_layer_fkey; Type: FK CONSTRAINT; Schema: public; Owner: postgres
+--
+
+ALTER TABLE ONLY public.cov_layer_obligation
+    ADD CONSTRAINT cov_layer_obligation_layer_fkey FOREIGN KEY (layer) REFERENCES public.cov_layer(code);
 
 
 --
@@ -492,17 +627,30 @@ GRANT ALL ON SCHEMA api TO qgis;
 
 
 --
--- Name: TABLE setting_options; Type: ACL; Schema: public; Owner: postgres
+-- Name: TABLE layers; Type: ACL; Schema: api; Owner: postgres
 --
 
-GRANT ALL ON TABLE public.setting_options TO qgis;
+GRANT SELECT ON TABLE api.layers TO web_anon;
 
 
 --
--- Name: TABLE settings; Type: ACL; Schema: api; Owner: postgres
+-- Name: TABLE layer_obligations; Type: ACL; Schema: api; Owner: postgres
 --
 
-GRANT SELECT ON TABLE api.settings TO web_anon;
+GRANT SELECT ON TABLE api.layer_obligations TO web_anon;
+
+--
+-- Name: FUNCTION cov_layer(double precision, double precision, character varying); Type: ACL; Schema: api; Owner: postgres
+--
+
+GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying) TO web_anon;
+
+-- cov_layer / cov_layer_source / cov_layer_obligation (public schema) are
+-- deliberately not granted to qgis or web_anon: cov_layer_source is a
+-- rendering-orchestration detail read only by cov_render_tiles.py (which
+-- runs as the postgres OS user / superuser via peer auth, so needs no
+-- explicit grant), and the api.* views above already expose everything the
+-- frontend needs.
 
 
 --

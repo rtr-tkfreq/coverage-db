@@ -26,16 +26,17 @@ the project file before rendering.
 
 A target can also be *derived*: instead of reading cov_mno directly, its
 QGIS project combines other targets (e.g. "all operators" or "F7/16 from
-A1TA+TMA+H3A"). Declare this via `RenderTarget.depends_on` — a list of the
-(operator, reference) pairs it's built from. This replaces the old
-`tileurl.in_all`-style boolean-per-row convention with an explicit,
-code-owned dependency list: a derived target's "is there new data" check
-looks at whether any dependency has a newer rendered date than the derived
-target's own latest `tileurl` row, and its rfc_date is the max of its
-dependencies' dates. List derived targets *after* the targets they depend on
-in TARGETS — everything below runs strictly sequentially in list order (see
-`main()`), so a single run picks up a leaf render and then its dependent
-combined render in the same pass, never in parallel.
+A1TA+TMA+H3A"). Which layers exist and which combine which is owned by the
+database (`cov_layer`/`cov_layer_source` — see postgresql/frq_scheme.sql),
+not by this script: PROJECT_PATHS below only maps a layer code to *where its
+QGIS project file is on this host*, a server-local detail that has no
+business being public API data. `build_targets()` joins the two at run time.
+A derived target's "is there new data" check looks at whether any dependency
+has a newer rendered date than the derived target's own latest `tileurl`
+row, and its rfc_date is the max of its dependencies' dates. Leaf targets are
+always processed before targets that depend on them (see `build_targets()`),
+and everything runs strictly sequentially (see `main()`) — never in
+parallel.
 
 Rendering the whole country at zoom 4-14 can take HOURS. This is deliberately
 a separate script from cov_download_mno.py (which only takes minutes) so it
@@ -82,8 +83,9 @@ def log_error(*args, **kwargs) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Render targets: one QGIS project template per (operator, reference).
-# Extend this list as more per-operator projects are built.
+# Render targets: one QGIS project template per layer code (cov_layer.code).
+# Add an entry here once a layer's project template exists; cov_layer_source
+# (the database) supplies the dependency graph automatically.
 # --------------------------------------------------------------------------- #
 
 @dataclass
@@ -91,21 +93,25 @@ class RenderTarget:
     operator: str
     reference: str  # e.g. "F1/16"
     project_path: Path
-    # Leaf (operator, reference) pairs this target is combined from. Empty
-    # for an ordinary per-operator target. Non-empty marks this as a derived
-    # target: see the module docstring.
+    # Leaf (operator, reference) pairs this target is combined from, per
+    # cov_layer_source. Empty for an ordinary per-operator target.
     depends_on: tuple[tuple[str, str], ...] = ()
+    # Whether `reference` is this operator's canonical/default one (used for
+    # point-info when no specific reference is requested). True for e.g.
+    # TMA's F1/16, false for a secondary band like TMA's F7/16 if that ever
+    # becomes its own target. Written to tileurl.in_all for backward
+    # compatibility with the old (pre-cov_layer) api.cov() overloads during
+    # the migration window — see postgresql/migrate_cov_layer.sql.
+    primary: bool = True
 
 
-TARGETS = [
-    RenderTarget("TMA", "F1/16", PROJECT_DIR / "tma.qgs"),
-    # Add derived targets after their dependencies once a combined project
-    # template exists for them, e.g.:
-    # RenderTarget("@all", "F1/16", PROJECT_DIR / "all_operators.qgs",
-    #              depends_on=(("A1TA", "F1/16"), ("TMA", "F1/16"), ("H3A", "F1/16"))),
-    # RenderTarget("@all", "F7/16", PROJECT_DIR / "f7_16_combo.qgs",
-    #              depends_on=(("A1TA", "F7/16"), ("TMA", "F7/16"), ("H3A", "F7/16"))),
-]
+PROJECT_PATHS: dict[str, Path] = {
+    "TMA": PROJECT_DIR / "tma.qgs",
+    # Add a layer's project file here once it exists — its cov_layer.reference
+    # and any cov_layer_source rows are picked up automatically:
+    # "@all": PROJECT_DIR / "all_operators.qgs",
+    # "F7_16_ALL": PROJECT_DIR / "f7_16_combo.qgs",
+}
 
 
 # --------------------------------------------------------------------------- #
@@ -171,10 +177,59 @@ def pending_combined_date(target: "RenderTarget") -> Optional[str]:
     return combined_date
 
 
-def register_tileurl(operator: str, reference: str, rfc_date: str, url: str) -> bool:
+def layer_reference(code: str) -> Optional[str]:
+    """cov_layer.reference for a given layer code."""
+    return psql_scalar(f"SELECT reference FROM cov_layer WHERE code = '{code}';")
+
+
+def layer_dependencies(code: str) -> list[tuple[str, str]]:
+    """(operator, reference) pairs `code` is combined from, per cov_layer_source.
+
+    reference here is cov_layer_source's own reference column, not the
+    source layer's cov_layer.reference — a combined layer can depend on a
+    *different* reference of an operator than that operator's own standalone
+    listing uses (e.g. A1TA's own layer is F1/16, but a combined F7/16 layer
+    depending on A1TA needs A1TA's F7/16 data).
+    """
+    sql = f"SELECT source, reference FROM cov_layer_source WHERE layer = '{code}';"
+    result = subprocess.run(["psql", "-t", "-A", "-F", ",", "-d", DB_NAME, "-c", sql],
+                             capture_output=True, text=True)
+    if result.returncode != 0:
+        log_error(result.stderr, end="", file=sys.stderr)
+        return []
+    return [tuple(line.split(",", 1)) for line in result.stdout.strip().splitlines() if line]
+
+
+def build_targets() -> list[RenderTarget]:
+    """Join PROJECT_PATHS with the dependency graph from cov_layer_source.
+
+    Leaves (no dependencies) sort before targets that depend on them, so a
+    single sequential pass over the result renders a leaf and then whatever
+    combines it in the same run. Assumes a single dependency level (combined
+    layers depend only on leaves, not on other combined layers).
+    """
+    targets = [
+        RenderTarget(code, layer_reference(code) or "", path, tuple(layer_dependencies(code)))
+        for code, path in PROJECT_PATHS.items()
+    ]
+    targets.sort(key=lambda t: bool(t.depends_on))
+    return targets
+
+
+def register_tileurl(operator: str, reference: str, rfc_date: str, in_all: bool) -> bool:
+    """Insert a tileurl row. There is no `url` column — api.tileurl computes
+
+    the URL from operator/reference/date (see deploy_tiles(), which must
+    write files to the matching physical path). in_all is written for
+    backward compatibility with pre-cov_layer api.cov() overloads still
+    live in production during the migration window; see
+    postgresql/migrate_cov_layer.sql.
+    """
+    ref_sql = f"'{reference}'" if reference else "NULL"
     sql = f"""
 BEGIN;
-INSERT INTO tileurl(operator, reference, date, url) VALUES ('{operator}', '{reference}', '{rfc_date}', '{url}');
+INSERT INTO tileurl(operator, reference, date, in_all)
+VALUES ('{operator}', {ref_sql}, '{rfc_date}', {str(in_all).lower()});
 COMMIT;
 """
     return run_psql(sql).returncode == 0
@@ -217,15 +272,21 @@ def render_tiles(target: RenderTarget, rfc_date: str, workdir: Path) -> Optional
 
 
 def deploy_tiles(tiles_dir: Path, operator: str, reference: str, rfc_date: str) -> str:
-    """Move rendered tiles into the docroot, replacing any prior copy for this exact date."""
-    ref_slug = reference.replace("/", "_")
-    dest = TILE_DOCROOT / operator / ref_slug / rfc_date
+    """Move rendered tiles into the docroot, replacing any prior copy for this exact date.
+
+    Path must match api.tileurl's computed URL exactly:
+    concat('/cov/', replace(operator,'@',''), '/', coalesce(replace(reference,'/','_'),'any'), '/', date)
+    — '@' stripped from the operator segment, 'any' when reference is empty/None.
+    """
+    op_slug = operator.replace("@", "")
+    ref_slug = reference.replace("/", "_") if reference else "any"
+    dest = TILE_DOCROOT / op_slug / ref_slug / rfc_date
     dest.parent.mkdir(parents=True, exist_ok=True)
     if dest.exists():
         import shutil
         shutil.rmtree(dest)
     tiles_dir.rename(dest)
-    return f"/cov/{operator}/{ref_slug}/{rfc_date}"
+    return f"/cov/{op_slug}/{ref_slug}/{rfc_date}"
 
 
 def process_target(target: RenderTarget) -> bool:
@@ -250,7 +311,7 @@ def process_target(target: RenderTarget) -> bool:
 
         url = deploy_tiles(tiles_dir, target.operator, target.reference, rfc_date)
 
-        if not register_tileurl(target.operator, target.reference, rfc_date, url):
+        if not register_tileurl(target.operator, target.reference, rfc_date, target.primary):
             log_error(f"  tiles published to {url} but failed to register tileurl row")
             return False
 
@@ -284,7 +345,7 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         failures = [
-            f"{t.operator} {t.reference}" for t in TARGETS if not process_target(t)
+            f"{t.operator} {t.reference}" for t in build_targets() if not process_target(t)
         ]
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)

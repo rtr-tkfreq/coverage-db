@@ -339,6 +339,20 @@
       # 6.6M-row table this is the difference between a render finishing and
       # one that looks hung.
 
+    - name: Seed a minimal cov_layer catalog on a fresh install (@all + TMA)
+      ansible.builtin.command:
+        cmd: >-
+          psql -d {{ cov_db_name }} -c
+          "INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
+           VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1)
+           ON CONFLICT (code) DO NOTHING;
+           INSERT INTO cov_layer_source (layer, source) VALUES ('@all', 'TMA') ON CONFLICT DO NOTHING;"
+      become_user: "{{ cov_run_user }}"
+      when: cov_init_schema | bool
+      # Migrating an existing installation instead of starting fresh? Use
+      # postgresql/migrate_cov_layer.sql by hand — it carries over the real
+      # operator list from setting_options.filter instead of this placeholder.
+
     - name: Deploy systemd units
       ansible.builtin.template:
         src: "{{ item }}.j2"

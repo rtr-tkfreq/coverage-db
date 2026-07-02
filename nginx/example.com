@@ -44,6 +44,29 @@ map $http_accept_language $accept_language {
                 proxy_pass http://127.0.0.1:3000/rpc/cov;
         }
 
+	# endpoint /rpc/id (used by the frontend's point-info panel — added
+	# here because it was missing from this fragment despite being called
+	# already; verify whether real production nginx already has this
+	# under a location block not reflected in this checked-in file)
+        location /api/rpc/id  {
+                proxy_pass http://127.0.0.1:3000/rpc/id;
+        }
+
+	# endpoint /layers (new — replaces /api/settings' operator list)
+        location /api/layers  {
+                proxy_pass http://127.0.0.1:3000/layers;
+        }
+
+	# endpoint /layer_obligations (new — replaces /api/settings' nested obligations)
+        location /api/layer_obligations  {
+                proxy_pass http://127.0.0.1:3000/layer_obligations;
+        }
+
+	# endpoint /rpc/cov_layer (new — replaces /api/rpc/cov for the frontend's point-info)
+        location /api/rpc/cov_layer  {
+                proxy_pass http://127.0.0.1:3000/rpc/cov_layer;
+        }
+
 	# background map using cache
 	location /basemap/ {
 		add_header X-License 'geoland.at - Creative Commons Namensnennung 4.0 International';
