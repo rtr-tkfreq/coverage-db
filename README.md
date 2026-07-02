@@ -55,6 +55,17 @@ be found in a separate repository at
    and PostgREST's `/tileurl` endpoint immediately reflects the new date —
    the frontend picks it up on its next request, no further steps needed.
 
+Some layers are **derived** from other operators' data instead of reading
+`cov_mno` directly (e.g. a combined "all operators" layer, or a layer
+combining one reference band across several specific operators). These are
+declared via `RenderTarget.depends_on` in `cov_render_tiles.py`: a derived
+target's own "is there new data" check is "does any dependency have a newer
+rendered date than I do", and its rfc_date is the max across its
+dependencies. List derived targets after their dependencies in `TARGETS` —
+everything still runs strictly sequentially (no parallel rendering, by
+design), so one run picks up a leaf render and its dependent combined render
+in the same pass.
+
 ## Full automation
 
 Both scripts are self-contained and idempotent, so end-to-end automation is
