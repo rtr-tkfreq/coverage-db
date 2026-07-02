@@ -340,6 +340,29 @@ ls /var/www/tiles/cov/TMA/F1_16/
 curl -I http://localhost/cov/TMA/F1_16/<date>/4/8/5.png
 ```
 
+To render just one target manually instead of the full scan (useful for
+testing a specific operator, e.g. a small one like SBG for a quick check,
+or a combined layer like `all3600mhz` that hasn't rendered yet) use
+`--target OPERATOR` or `--target OPERATOR:REFERENCE` (needed if an operator
+has more than one leaf, e.g. TMA has both F1/16 and F7/16 — `--target TMA`
+alone errors asking you to disambiguate). A combined target is selected by
+its own code, e.g. `--target all3600mhz`. This bypasses the lock file (a
+scoped debug run isn't the scheduled job) but still only renders if there's
+actually new/unrendered data for that target — same trigger logic as a full
+run.
+
+```bash
+su postgres -c '/opt/coverage-db/scripts/import-opendata/cov_render_tiles.py --target SBG'
+```
+
+Add `--output-dir PATH` to write tiles somewhere other than the real tile
+docroot — e.g. so a debug render doesn't overwrite a real one you're
+comparing against:
+
+```bash
+su postgres -c '/opt/coverage-db/scripts/import-opendata/cov_render_tiles.py --target all3600mhz --output-dir /tmp/debug-tiles'
+```
+
 ## Notes
 
 - If an operator's site blocks this host's IP, `cov_download_mno.py` supports
