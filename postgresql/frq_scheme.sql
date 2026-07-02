@@ -83,80 +83,6 @@ CREATE EXTENSION IF NOT EXISTS postgis_topology WITH SCHEMA topology;
 COMMENT ON EXTENSION postgis_topology IS 'PostGIS topology spatial types and functions';
 
 
---
--- Name: cov(double precision, double precision); Type: FUNCTION; Schema: api; Owner: qgis
---
-
-CREATE FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
-    LANGUAGE plpgsql
-    AS $_$
-BEGIN
-   return query
-   SELECT
-          coalesce(vn.visible_name, cov_mno.operator)::VARCHAR as operator,
-          public.cov_mno.reference::VARCHAR,
-          public.cov_mno.license::VARCHAR,
-          public.cov_mno.rfc_date::VARCHAR last_updated,
-          public.cov_mno.raster::VARCHAR,
-          NULL::VARCHAR,
-          round(public.cov_mno.dl_max /1000)::integer downloadKbitMax,
-          round(public.cov_mno.ul_max /1000)::integer uploadKbitMax,
-          round(public.cov_mno.dl_normal /1000)::integer downloadKbitNormal,
-          round(public.cov_mno.ul_normal/1000)::integer uploadKbitNormal,
-          ST_AsGeoJSON(ST_Transform(public.atraster.geom,4326)) geoJson,
-                  ST_X(ST_Centroid(ST_Transform(public.atraster.geom,4326))),
-          ST_Y(ST_Centroid(ST_Transform(public.atraster.geom,4326)))
-          from public.atraster
-          left join public.cov_mno on public.cov_mno.raster=public.atraster.id
-          left join public.cov_visible_name vn on vn.operator = public.cov_mno.operator
-          where public.cov_mno.raster is not null AND
-                    ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint($1::FLOAT,$2::FLOAT),4326),3035)),public.atraster.geom)
-          order by public.cov_mno.dl_max desc;
-END ;
-$_$;
-
-
-ALTER FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision) OWNER TO qgis;
-
---
--- Name: cov(double precision, double precision, character varying, character varying); Type: FUNCTION; Schema: api; Owner: qgis
---
-
-CREATE FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision, cov_operator character varying, cov_reference character varying) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
-    LANGUAGE plpgsql
-    AS $_$
-BEGIN
-   return query
-   SELECT
-          coalesce(vn.visible_name, cov_mno.operator)::VARCHAR as operator,
-          public.cov_mno.reference::VARCHAR,
-          public.cov_mno.license::VARCHAR,
-          public.cov_mno.rfc_date::VARCHAR last_updated,
-          public.cov_mno.raster::VARCHAR,
-          NULL::VARCHAR,
-          round(public.cov_mno.dl_max /1000)::integer downloadKbitMax,
-          round(public.cov_mno.ul_max /1000)::integer uploadKbitMax,
-          round(public.cov_mno.dl_normal /1000)::integer downloadKbitNormal,
-          round(public.cov_mno.ul_normal/1000)::integer uploadKbitNormal,
-          ST_AsGeoJSON(ST_Transform(public.atraster.geom,4326)) geoJson,
-                  ST_X(ST_Centroid(ST_Transform(public.atraster.geom,4326))),
-          ST_Y(ST_Centroid(ST_Transform(public.atraster.geom,4326)))
-          from public.atraster
-          left join public.cov_mno on public.cov_mno.raster=public.atraster.id
-          left join public.cov_visible_name vn on vn.operator = public.cov_mno.operator
-          where public.cov_mno.raster is not null and
-                    -- For geodetic coordinates, X is longitude and Y is latitude
-                    ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint($1::FLOAT,$2::FLOAT),4326),3035)),public.atraster.geom)
-                    and coalesce(vn.visible_name, cov_mno.operator)::VARCHAR = cov_operator 
-                    and public.cov_mno.reference::VARCHAR = cov_reference
-          order by public.cov_mno.dl_max desc;
-                    
-END ;
-$_$;
-
-
-ALTER FUNCTION api.cov(cov_longitude double precision, cov_latitude double precision, cov_operator character varying, cov_reference character varying) OWNER TO qgis;
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -237,7 +163,7 @@ CREATE VIEW api.layers AS
    FROM public.cov_layer;
 
 
-ALTER TABLE api.layers OWNER TO postgres;
+ALTER VIEW api.layers OWNER TO postgres;
 
 --
 -- Name: layer_obligations; Type: VIEW; Schema: api; Owner: postgres
@@ -252,7 +178,7 @@ CREATE VIEW api.layer_obligations AS
    FROM public.cov_layer_obligation;
 
 
-ALTER TABLE api.layer_obligations OWNER TO postgres;
+ALTER VIEW api.layer_obligations OWNER TO postgres;
 
 --
 -- Name: cov_layer(double precision, double precision, character varying); Type: FUNCTION; Schema: api; Owner: postgres
@@ -355,12 +281,18 @@ ALTER FUNCTION api.layer_tileurl(cov_layer character varying) OWNER TO postgres;
 -- Name: tileurl; Type: TABLE; Schema: public; Owner: postgres
 --
 
+-- No `url` column — it's computed (see the view below), never stored.
+-- in_all marks which row is the currently-published one to use for point
+-- lookups; superseded by cov_layer/cov_layer_source going forward (see
+-- api.cov_layer()), but still what the pre-existing api.cov() overloads
+-- above rely on. register_tileurl() in cov_render_tiles.py writes this
+-- directly, matching this shape exactly — see that script's docstring.
 CREATE TABLE public.tileurl (
-    uid integer NOT NULL,
     operator character varying,
     reference character varying,
     date date,
-    url character varying
+    uid integer NOT NULL,
+    in_all boolean
 );
 
 
@@ -369,16 +301,22 @@ ALTER TABLE public.tileurl OWNER TO postgres;
 --
 -- Name: tileurl; Type: VIEW; Schema: api; Owner: postgres
 --
+-- url is computed, not stored — deploy_tiles() in cov_render_tiles.py must
+-- write files to a path matching this exact formula, or tiles the DB claims
+-- exist 404. '@' stripped from the operator segment, 'any' for a NULL
+-- reference.
 
 CREATE VIEW api.tileurl AS
- SELECT tileurl.operator,
-    tileurl.reference,
-    tileurl.date,
-    tileurl.url
-   FROM public.tileurl;
+ SELECT operator,
+    reference,
+    date,
+    (concat('/cov/', replace((operator)::text, '@'::text, ''::text), '/', COALESCE(replace((reference)::text, '/'::text, '_'::text), 'any'::text), '/', date))::character varying AS url,
+    in_all
+   FROM public.tileurl
+  ORDER BY reference;
 
 
-ALTER TABLE api.tileurl OWNER TO postgres;
+ALTER VIEW api.tileurl OWNER TO qgis;
 
 --
 -- Name: atraster; Type: TABLE; Schema: public; Owner: postgres
@@ -430,7 +368,8 @@ CREATE TABLE public.cov_mno (
     dl_normal bigint,
     ul_normal bigint,
     dl_max bigint,
-    ul_max bigint
+    ul_max bigint,
+    geom public.geometry(MultiPolygon,3857)
 );
 
 
@@ -462,10 +401,16 @@ ALTER SEQUENCE public.cov_mno_uid_seq OWNED BY public.cov_mno.uid;
 -- Name: cov_visible_name; Type: TABLE; Schema: public; Owner: postgres
 --
 
+-- visible_name_long is used by api.id() in production (joined against the
+-- internal rtr_kg table for obligation reporting) — that function isn't
+-- included here since it depends on several other internal-only tables not
+-- part of this public schema (rtr_j1, rtr_j6, rtr_id100, rtr_id250, vgd,
+-- atraster250). The column itself is harmless to carry regardless.
 CREATE TABLE public.cov_visible_name (
     uid integer NOT NULL,
     operator character varying(200),
-    visible_name character varying(50)
+    visible_name character varying(50),
+    visible_name_long character varying(100)
 );
 
 
@@ -631,6 +576,20 @@ CREATE INDEX atraster_geom_idx ON public.atraster USING gist (geom);
 
 
 --
+-- Name: cov_mno_dl_max_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX cov_mno_dl_max_idx ON public.cov_mno USING btree (operator, reference, rfc_date, dl_max);
+
+
+--
+-- Name: cov_mno_dl_normal_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX cov_mno_dl_normal_idx ON public.cov_mno USING btree (operator, reference, rfc_date, dl_normal);
+
+
+--
 -- Name: cov_mno_operator_reference_license_raster_idx; Type: INDEX; Schema: public; Owner: postgres
 --
 
@@ -642,6 +601,31 @@ CREATE INDEX cov_mno_operator_reference_license_raster_idx ON public.cov_mno USI
 --
 
 CREATE INDEX cov_mno_raster_idx ON public.cov_mno USING btree (raster);
+
+
+--
+-- Name: cov_mno_ul_max_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX cov_mno_ul_max_idx ON public.cov_mno USING btree (operator, reference, rfc_date, ul_max);
+
+
+--
+-- Name: cov_mno_ul_normal_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+
+CREATE INDEX cov_mno_ul_normal_idx ON public.cov_mno USING btree (operator, reference, rfc_date, ul_normal);
+
+
+--
+-- Name: cov_mno_geom_idx; Type: INDEX; Schema: public; Owner: postgres
+--
+-- Not optional in practice: without it, cov_mno.geom-filtered queries (both
+-- the api.cov() overloads above and any QGIS project's SQL layer) fall back
+-- to a near-full-table scan. Confirmed via EXPLAIN ANALYZE earlier this
+-- project: 1.6s for a *limited* query, vs 10.7ms with the index.
+
+CREATE INDEX cov_mno_geom_idx ON public.cov_mno USING gist (geom);
 
 
 --
@@ -729,7 +713,7 @@ GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.co
 -- Name: TABLE tileurl; Type: ACL; Schema: public; Owner: postgres
 --
 
-GRANT ALL ON TABLE public.tileurl TO qgis;
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.tileurl TO qgis;
 
 
 --
@@ -752,7 +736,7 @@ GRANT SELECT ON TABLE public.atraster TO web_anon;
 --
 
 GRANT SELECT ON TABLE public.cov_mno TO web_anon;
-GRANT ALL ON TABLE public.cov_mno TO qgis;
+GRANT SELECT,INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE public.cov_mno TO qgis;
 
 
 --

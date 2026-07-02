@@ -235,6 +235,17 @@
         mode: "0644"
       loop:
         - tma.qgs
+        - a1ta.qgs
+        - h3a.qgs
+        - liwest.qgs
+        - hgraz.qgs
+        - sbg.qgs
+        - mass.qgs
+        - tma_3600.qgs
+        - a1ta_3600.qgs
+        - h3a_3600.qgs
+        - all.qgs
+        - all3600mhz.qgs
 
     - name: Create .pgpass for headless QGIS auth (qgis role, TCP)
       ansible.builtin.copy:
@@ -346,12 +357,13 @@
           "INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
            VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1)
            ON CONFLICT (code) DO NOTHING;
-           INSERT INTO cov_layer_source (layer, source) VALUES ('@all', 'TMA') ON CONFLICT DO NOTHING;"
+           INSERT INTO cov_layer_source (layer, source, reference)
+           VALUES ('@all', 'TMA', 'F1/16'), ('TMA', 'TMA', 'F1/16') ON CONFLICT DO NOTHING;"
       become_user: "{{ cov_run_user }}"
       when: cov_init_schema | bool
-      # Migrating an existing installation instead of starting fresh? Use
-      # postgresql/migrate_cov_layer.sql by hand — it carries over the real
-      # operator list from setting_options.filter instead of this placeholder.
+      # Every operator needs a self-referencing cov_layer_source row too —
+      # api.cov_layer() resolves every selection, including a plain
+      # single-operator one, through cov_layer_source (see README.md).
 
     - name: Deploy systemd units
       ansible.builtin.template:

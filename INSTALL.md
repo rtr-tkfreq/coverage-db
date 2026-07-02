@@ -171,12 +171,13 @@ has no selectable layers until you add some:
 ```sql
 INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
   VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1);
-INSERT INTO cov_layer_source (layer, source) VALUES ('@all', 'TMA');
+INSERT INTO cov_layer_source (layer, source, reference) VALUES ('@all', 'TMA', 'F1/16'), ('TMA', 'TMA', 'F1/16');
 ```
 
-(If you're migrating an existing installation that already has data in
-`setting_options`, use `postgresql/migrate_cov_layer.sql` instead — see
-README.md's migration section.)
+(Every operator needs a self-referencing `cov_layer_source` row too — see
+"The layer catalog" in README.md for why: `api.cov_layer()` resolves every
+selection, including a plain single-operator one, through
+`cov_layer_source`.)
 
 ## 6. Populate `atraster` (the national 100m raster grid)
 
@@ -208,7 +209,7 @@ backfill and the `api.cov()` function; check both if you re-import this data.
 
 ```bash
 mkdir -p /opt/coverage-db/scripts/import-opendata
-cp scripts/import-opendata/{cov_download_mno.py,cov_render_tiles.py,cov_head.py,tma.qgs} \
+cp scripts/import-opendata/{cov_download_mno.py,cov_render_tiles.py,cov_head.py,*.qgs} \
    /opt/coverage-db/scripts/import-opendata/
 chown -R postgres:postgres /opt/coverage-db/scripts/import-opendata
 chmod +x /opt/coverage-db/scripts/import-opendata/*.py

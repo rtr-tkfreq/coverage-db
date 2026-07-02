@@ -41,7 +41,7 @@ Selecting a single reference of an operator that already has another
 reference under the same code (e.g. adding "TMA 3600 MHz" alongside TMA's
 existing F1/16 listing) needs no combined target at all — it's a plain
 LEAF_PROJECTS entry for (TMA, F7/16), plus a cov_layer_source row aliasing
-a new cov_layer code to it (see api.layer_tileurl() in migrate_cov_layer.sql,
+a new cov_layer code to it (see api.layer_tileurl() in postgresql/frq_scheme.sql,
 which resolves such aliases straight to the leaf's own tiles instead of
 expecting a separate render).
 
@@ -111,9 +111,9 @@ class RenderTarget:
     # Whether `reference` is this operator's canonical/default one (used for
     # point-info when no specific reference is requested). True for e.g.
     # TMA's F1/16, false for a secondary band like TMA's F7/16. Written to
-    # tileurl.in_all for backward compatibility with the old (pre-cov_layer)
-    # api.cov() overloads during the migration window — see
-    # postgresql/migrate_cov_layer.sql.
+    # tileurl.in_all, which api.cov_layer()/api.layer_tileurl() don't read
+    # (they resolve via cov_layer_source instead) — kept only because the
+    # column itself is still part of the live tileurl table.
     primary: bool = True
 
 
@@ -128,21 +128,32 @@ class LeafProject:
 # it exists — most are plain aliases over one of these (or, for a combined
 # layer, over several — see COMBINED_PROJECTS below). Set primary=False on
 # any second reference added for an operator that already has one, so
-# tileurl.in_all stays accurate for the old (deprecated) api.cov() overloads.
+# tileurl.in_all stays accurate for the old (deprecated, still live on
+# production) api.cov() overloads.
 LEAF_PROJECTS: dict[tuple[str, str], LeafProject] = {
     ("TMA", "F1/16"): LeafProject(PROJECT_DIR / "tma.qgs"),
-    # ("TMA", "F7/16"): LeafProject(PROJECT_DIR / "tma_3600.qgs", primary=False),
+    ("A1TA", "F1/16"): LeafProject(PROJECT_DIR / "a1ta.qgs"),
+    ("H3A", "F1/16"): LeafProject(PROJECT_DIR / "h3a.qgs"),
+    ("TMA", "F7/16"): LeafProject(PROJECT_DIR / "tma_3600.qgs", primary=False),
+    ("A1TA", "F7/16"): LeafProject(PROJECT_DIR / "a1ta_3600.qgs", primary=False),
+    ("H3A", "F7/16"): LeafProject(PROJECT_DIR / "h3a_3600.qgs", primary=False),
+    # F7/16 is these four operators' own canonical reference, not a
+    # secondary band — primary=True, same as TMA/A1TA/H3A's F1/16 above.
+    ("LIWEST", "F7/16"): LeafProject(PROJECT_DIR / "liwest.qgs"),
+    ("HGRAZ", "F7/16"): LeafProject(PROJECT_DIR / "hgraz.qgs"),
+    ("SBG", "F7/16"): LeafProject(PROJECT_DIR / "sbg.qgs"),
+    ("MASS", "F7/16"): LeafProject(PROJECT_DIR / "mass.qgs"),
 }
 
 # One entry per cov_layer code that combines several leaves (per
 # cov_layer_source) into its own rendered/composited tile set, published
 # under its own code. A layer that's just an alias for a single leaf (e.g.
-# a hypothetical "TMA 3600 MHz" pointing only at (TMA, F7/16)) does NOT
-# belong here — it needs no render of its own; api.layer_tileurl() resolves
-# it straight to that leaf's tiles.
+# "A1TA_3600" pointing only at (A1TA, F7/16)) does NOT belong here — it
+# needs no render of its own; api.layer_tileurl() resolves it straight to
+# that leaf's tiles.
 COMBINED_PROJECTS: dict[str, Path] = {
-    # "@all": PROJECT_DIR / "all_operators.qgs",
-    # "all3600mhz": PROJECT_DIR / "all3600mhz.qgs",
+    "@all": PROJECT_DIR / "all.qgs",
+    "all3600mhz": PROJECT_DIR / "all3600mhz.qgs",
 }
 
 
@@ -255,10 +266,10 @@ def register_tileurl(operator: str, reference: str, rfc_date: str, in_all: bool)
     """Insert a tileurl row. There is no `url` column — api.tileurl computes
 
     the URL from operator/reference/date (see deploy_tiles(), which must
-    write files to the matching physical path). in_all is written for
-    backward compatibility with pre-cov_layer api.cov() overloads still
-    live in production during the migration window; see
-    postgresql/migrate_cov_layer.sql.
+    write files to the matching physical path). in_all is still written for
+    consistency with the live tileurl table's shape, though nothing
+    currently reads it — api.cov_layer()/api.layer_tileurl() resolve via
+    cov_layer_source instead.
     """
     ref_sql = f"'{reference}'" if reference else "NULL"
     sql = f"""
