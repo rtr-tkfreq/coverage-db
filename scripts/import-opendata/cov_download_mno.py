@@ -453,8 +453,15 @@ def dedupe(out_dir: Path, root: Path, remove_duplicates: bool) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 def run_psql(sql: str, dbname: str = DB_NAME) -> subprocess.CompletedProcess:
-    """Run a SQL script through the psql CLI, mirroring `echo -e $sql | psql <dbname>`."""
-    result = subprocess.run(["psql", dbname], input=sql, text=True, capture_output=True)
+    """Run a SQL script through the psql CLI, mirroring `echo -e $sql | psql <dbname>`.
+
+    -v ON_ERROR_STOP=1 is not optional here: without it, psql's default exit
+    code is 0 even when a statement inside the script errors (the failing
+    statement just gets skipped, e.g. leaving a BEGIN;...;COMMIT; block to
+    ROLLBACK instead — silently). Callers check returncode == 0 to decide
+    success; without this flag that check is meaningless.
+    """
+    result = subprocess.run(["psql", "-v", "ON_ERROR_STOP=1", dbname], input=sql, text=True, capture_output=True)
     if result.stdout:
         log(result.stdout, end="")
     if result.returncode != 0:
@@ -498,19 +505,11 @@ def import_all(csv_dir: Path, names: list[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 def import_final_step() -> bool:
-    """Backfill geom for newly imported rows from the atraster lookup table.
-
-    Joins on atraster.cellcode, not atraster.id — the Statistik Austria
-    shapefile's actual current column (confirmed against production; `id`
-    doesn't exist there). Using the wrong column here doesn't error, it just
-    silently matches zero rows, leaving geom NULL for every newly imported
-    row — QGIS then renders "successfully" (fast, since there's nothing to
-    draw) but produces empty tiles.
-    """
+    """Backfill geom for newly imported rows from the atraster lookup table."""
     log("Import, update geom")
     sql = """
 BEGIN;
-update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.cellcode=raster and cov_mno.geom is null;
+update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.id=raster and cov_mno.geom is null;
 COMMIT;
 """
     return run_psql(sql).returncode == 0

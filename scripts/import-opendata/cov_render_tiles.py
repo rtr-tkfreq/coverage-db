@@ -169,7 +169,14 @@ COMBINED_PROJECTS: dict[str, Path] = {
 # --------------------------------------------------------------------------- #
 
 def run_psql(sql: str, dbname: str = DB_NAME) -> subprocess.CompletedProcess:
-    result = subprocess.run(["psql", dbname], input=sql, text=True, capture_output=True)
+    """-v ON_ERROR_STOP=1 is not optional: without it, psql's default exit code
+
+    is 0 even when a statement inside the script errors (e.g. a
+    BEGIN;...;COMMIT; block silently ROLLBACKs instead). Callers check
+    returncode == 0 to decide success; without this flag that check is
+    meaningless.
+    """
+    result = subprocess.run(["psql", "-v", "ON_ERROR_STOP=1", dbname], input=sql, text=True, capture_output=True)
     if result.stdout:
         log(result.stdout, end="")
     if result.returncode != 0:
