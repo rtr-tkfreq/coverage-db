@@ -115,6 +115,13 @@ class RenderTarget:
     # (they resolve via cov_layer_source instead) — kept only because the
     # column itself is still part of the live tileurl table.
     primary: bool = True
+    # True for a COMBINED_PROJECTS entry, False for a LEAF_PROJECTS one. Set
+    # explicitly by build_targets() — deliberately NOT inferred from
+    # `bool(depends_on)`, since an empty depends_on on a combined target
+    # means "cov_layer_source is missing rows for this layer" (a data bug to
+    # surface loudly), not "treat this as a leaf and query cov_mno for an
+    # operator that will never exist there".
+    is_combined: bool = False
 
 
 @dataclass
@@ -252,11 +259,12 @@ def build_targets() -> list[RenderTarget]:
     combined layers).
     """
     leaves = [
-        RenderTarget(operator, reference, leaf.project_path, (), leaf.primary)
+        RenderTarget(operator, reference, leaf.project_path, (), leaf.primary, is_combined=False)
         for (operator, reference), leaf in LEAF_PROJECTS.items()
     ]
     combined = [
-        RenderTarget(code, layer_reference(code) or "", path, tuple(layer_dependencies(code)))
+        RenderTarget(code, layer_reference(code) or "", path, tuple(layer_dependencies(code)),
+                     is_combined=True)
         for code, path in COMBINED_PROJECTS.items()
     ]
     return leaves + combined
@@ -348,7 +356,13 @@ def process_target(target: RenderTarget) -> bool:
         log_error(f"  no project template at {target.project_path}")
         return False
 
-    if target.depends_on:
+    if target.is_combined:
+        if not target.depends_on:
+            log_error(f"  {target.operator} is a combined target but cov_layer_source has no "
+                      f"rows for it — check `SELECT * FROM cov_layer_source WHERE layer = "
+                      f"'{target.operator}';` on the database. Not rendering (would otherwise "
+                      f"silently do nothing every run).")
+            return False
         rfc_date = pending_combined_date(target)
     else:
         rfc_date = latest_unrendered_date(target.operator, target.reference)
