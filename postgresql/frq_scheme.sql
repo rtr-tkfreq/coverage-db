@@ -645,12 +645,22 @@ GRANT SELECT ON TABLE api.layer_obligations TO web_anon;
 
 GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying) TO web_anon;
 
--- cov_layer / cov_layer_source / cov_layer_obligation (public schema) are
--- deliberately not granted to qgis or web_anon: cov_layer_source is a
--- rendering-orchestration detail read only by cov_render_tiles.py (which
--- runs as the postgres OS user / superuser via peer auth, so needs no
--- explicit grant), and the api.* views above already expose everything the
--- frontend needs.
+-- Plain PL/pgSQL functions run as INVOKER by default (unlike views, which
+-- run as their owner) — api.cov_layer()'s body queries these public-schema
+-- tables directly, so web_anon needs SELECT on them too, or every call
+-- fails with "permission denied for table cov_layer_source" regardless of
+-- the EXECUTE grant above. This does NOT expose them as REST resources —
+-- PostgREST only serves the `api` schema (db-schema=api), so a grant on a
+-- `public` table only lets the function read it on the caller's behalf.
+GRANT SELECT ON TABLE public.cov_layer TO web_anon;
+GRANT SELECT ON TABLE public.cov_layer_source TO web_anon;
+
+-- cov_layer_obligation has no such requirement: only queried via the
+-- api.layer_obligations VIEW, and views run as their owner (postgres) by
+-- default, so the view-level grant above is sufficient on its own.
+-- cov_render_tiles.py's own reads of cov_layer/cov_layer_source run as the
+-- postgres OS user / superuser via peer auth, so need no explicit grant
+-- either way.
 
 
 --

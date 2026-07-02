@@ -101,6 +101,16 @@ $_$;
 
 GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying) TO web_anon;
 
+-- Plain PL/pgSQL functions run as INVOKER by default (unlike views, which
+-- run as their owner) — the function body above queries these public-schema
+-- tables directly, so web_anon needs SELECT on them too, or every call
+-- fails with "permission denied for table cov_layer_source" regardless of
+-- the EXECUTE grant. Doesn't expose them as REST resources — PostgREST only
+-- serves the `api` schema (db-schema=api), so this just lets the function
+-- read them on the caller's behalf.
+GRANT SELECT ON TABLE cov_layer TO web_anon;
+GRANT SELECT ON TABLE cov_layer_source TO web_anon;
+
 -- ============================================================
 -- Part 2: migrate data out of setting_options.filter (uid = 1,
 -- matching what api.settings always selected)
