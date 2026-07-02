@@ -369,8 +369,33 @@ def process_target(target: RenderTarget) -> bool:
 # CLI
 # --------------------------------------------------------------------------- #
 
+def select_target(targets: list[RenderTarget], spec: str) -> Optional[RenderTarget]:
+    """Pick the one target matching `spec` for --target, or None (with an error logged).
+
+    spec is either "OPERATOR" (a leaf's operator, or a combined target's own
+    code — e.g. "SBG" or "all3600mhz"), or "OPERATOR:REFERENCE" to disambiguate
+    an operator with more than one leaf (e.g. "TMA:F7/16").
+    """
+    if ":" in spec:
+        operator, reference = spec.split(":", 1)
+        matches = [t for t in targets if t.operator == operator and t.reference == reference]
+    else:
+        matches = [t for t in targets if t.operator == spec]
+
+    if not matches:
+        log_error(f"no target matches {spec!r} (available: "
+                  f"{', '.join(f'{t.operator}:{t.reference}' for t in targets)})")
+        return None
+    if len(matches) > 1:
+        log_error(f"{spec!r} is ambiguous, matches: "
+                  f"{', '.join(f'{t.operator}:{t.reference}' for t in matches)} — "
+                  f"disambiguate with OPERATOR:REFERENCE")
+        return None
+    return matches[0]
+
+
 def main(argv: Optional[list[str]] = None) -> int:
-    global QUIET_LEVEL
+    global QUIET_LEVEL, TILE_DOCROOT
 
     parser = argparse.ArgumentParser(
         description="Render new coverage data into XYZ tiles and publish them."
@@ -379,8 +404,28 @@ def main(argv: Optional[list[str]] = None) -> int:
         "-q", "--quiet", action="count", default=0,
         help="suppress routine progress output; repeat (-qq) to also suppress failure details",
     )
+    parser.add_argument(
+        "--target", metavar="OPERATOR[:REFERENCE]",
+        help="render only this one target instead of everything, e.g. --target SBG, "
+             "--target TMA:F7/16, or --target all3600mhz (a combined target's own code). "
+             "Bypasses the lock file too, since a scoped debug run isn't the scheduled job.",
+    )
+    parser.add_argument(
+        "--output-dir", metavar="PATH",
+        help="write tiles under PATH instead of the tile docroot (COV_TILE_DOCROOT/"
+             "/var/www/tiles/cov) — for debug renders you don't want to publish live, "
+             "e.g. to avoid overwriting a real render while testing.",
+    )
     args = parser.parse_args(argv)
     QUIET_LEVEL = args.quiet
+    if args.output_dir:
+        TILE_DOCROOT = Path(args.output_dir)
+
+    if args.target:
+        target = select_target(build_targets(), args.target)
+        if target is None:
+            return 1
+        return 0 if process_target(target) else 1
 
     lock_fd = open(LOCK_FILE, "w")
     try:
