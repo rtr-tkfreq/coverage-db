@@ -4,6 +4,10 @@ This repository contains the backend for the coverage map. The web page can
 be found in a separate repository at
 * [coverage-website](https://github.com/rtr-tkfreq/coverage-website)
 
+`ansible/playbook.yml` builds and deploys the frontend too (clones it,
+`npm ci && ng build`, copies the output to `/var/www/frq`) — see
+[INSTALL.md](INSTALL.md) step 4 for the equivalent manual steps.
+
 ## Components
 
 * **PostgreSQL + PostGIS** — holds the coverage data (`cov_mno`: one row per

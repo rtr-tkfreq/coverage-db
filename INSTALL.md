@@ -86,7 +86,55 @@ separate package needed.
 apt install nginx
 ```
 
-## 4. Install PostgREST
+## 4. Build and deploy the coverage-website frontend
+
+Node.js from the official NodeSource repo, not Debian's bundled version —
+trixie's own `nodejs` package (20.19.2) is right at the edge of what this
+Angular CLI version needs (`^20.19 || ^22.12 || ^24`) and was confirmed too
+old for `ng build` in practice.
+
+```bash
+mkdir -m755 -p /etc/apt/keyrings
+curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
+  -o /etc/apt/keyrings/nodesource.asc
+chmod 644 /etc/apt/keyrings/nodesource.asc
+
+cat > /etc/apt/sources.list.d/nodesource.sources << 'EOF'
+Types: deb
+URIs: https://deb.nodesource.com/node_22.x
+Suites: nodistro
+Components: main
+Signed-By: /etc/apt/keyrings/nodesource.asc
+EOF
+
+apt update
+apt install nodejs git
+```
+
+Clone, build, and deploy:
+
+```bash
+git clone git@github.com:rtr-tkfreq/coverage-website.git /opt/coverage-website
+# (or the HTTPS remote if this host doesn't have SSH access to the repo)
+cd /opt/coverage-website
+npm ci
+npx ng build --configuration production
+
+mkdir -p /var/www/frq
+cp -r dist/frq-map/. /var/www/frq/
+chown -R root:www-data /var/www/frq
+```
+
+`outputPath` in `angular.json` is `dist/frq-map`, containing one
+subdirectory per locale (`de/`, `en/`) directly — matches
+`nginx/example.com`'s rewrite rule serving `/de/` and `/en/` as real
+subpaths, so this copies straight in with no extra nesting to strip.
+`nginx/example.com` (see step 9) sets `root /var/www/frq;` to serve it.
+
+To pick up a new commit later, `git pull` in `/opt/coverage-website` and
+repeat the `npm ci` / `ng build` / `cp -r` steps.
+
+## 5. Install PostgREST
 
 Not packaged for Debian — install the upstream static binary.
 
@@ -107,7 +155,7 @@ systemctl daemon-reload
 systemctl enable --now postgrest
 ```
 
-## 5. Database setup
+## 6. Database setup
 
 **Only do this on a fresh database** — none of this is safe to re-run against
 a populated production database.
@@ -168,18 +216,27 @@ chmod 600 ~/.pgpass
 (the layer catalog — see README.md) but doesn't seed them; a fresh install
 has no selectable layers until you add some:
 
-```sql
-INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
-  VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1);
-INSERT INTO cov_layer_source (layer, source, reference) VALUES ('@all', 'TMA', 'F1/16'), ('TMA', 'TMA', 'F1/16');
+```bash
+psql -d frq -f postgresql/seed_layers.sql
 ```
 
-(Every operator needs a self-referencing `cov_layer_source` row too — see
-"The layer catalog" in README.md for why: `api.cov_layer()` resolves every
-selection, including a plain single-operator one, through
-`cov_layer_source`.)
+That's the current real production set — 7 operators (A1TA/TMA/H3A on
+F1/16, LIWEST/SBG/MASS/HGRAZ on F7/16), the "all operators" combined layer,
+the 3-operator "3600 MHz" combo (A1TA+TMA+H3A on F7/16), and each of those
+three's F7/16 band as its own independently selectable layer — see the file
+itself for exactly what it inserts. Idempotent, safe to re-run. Every layer
+resolves purely through `cov_layer_source` (see README.md's "The layer
+catalog"): a plain operator needs a self-referencing row, `@all` needs one
+row per operator at that operator's own reference, and the `...3600mhz`
+layers point at specific (operator, F7/16) leaves regardless of that
+operator's own reference.
 
-## 6. Populate `atraster` (the national 100m raster grid)
+`all3600mhz`/`a1ta3600mhz`/`tma3600mhz`/`h3a3600mhz` need their QGIS project
+templates deployed too (see step 8) and `cov_render_tiles.py`'s
+`LEAF_PROJECTS`/`COMBINED_PROJECTS` to know about them — already the case if
+you deployed the current version of this repo.
+
+## 7. Populate `atraster` (the national 100m raster grid)
 
 This is what `cov_mno.raster` joins against to get a geometry. One-time,
 ~230MB download, takes several minutes to import (single-row INSERTs via
@@ -205,7 +262,7 @@ before relying on any SQL that joins `atraster.id = ...` — it may need to be
 `atraster.cellcode = ...` instead. This affects both the final-step geom
 backfill and the `api.cov()` function; check both if you re-import this data.
 
-## 7. Deploy the scripts and QGIS project templates
+## 8. Deploy the scripts and QGIS project templates
 
 ```bash
 mkdir -p /opt/coverage-db/scripts/import-opendata
@@ -219,7 +276,7 @@ The scripts must run as the `postgres` OS user — they rely on `psql`'s peer
 authentication (no password) and on `~` resolving to
 `/var/lib/postgresql`.
 
-## 8. nginx and tile docroot
+## 9. nginx and tile docroot
 
 ```bash
 mkdir -p /var/www/tiles
@@ -233,7 +290,7 @@ directive that belongs in the `http {}` context and `location` blocks that
 belong inside a `server {}` block. Wire it into a real server block with your
 actual `server_name`/TLS config; it's not auto-included by installing it.
 
-## 9. Systemd services
+## 10. Systemd services
 
 Create `/etc/systemd/system/cov-download.service`:
 
@@ -314,7 +371,7 @@ scheduled run that fires while a previous render is still in progress just
 exits quietly instead of running two renders concurrently — safe to leave the
 timer on a fixed daily schedule even though renders can take hours.
 
-## 10. Verifying it works
+## 11. Verifying it works
 
 ```bash
 # as postgres:

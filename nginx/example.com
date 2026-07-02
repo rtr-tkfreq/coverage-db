@@ -8,6 +8,11 @@ map $http_accept_language $accept_language {
 
 # vhost example.com
 
+	# Serves the coverage-website build output (see ansible/playbook.yml's
+	# "coverage-website: build the frontend from source and deploy it"
+	# tasks, which build it and copy dist/frq-map/{de,en}/ here).
+	root /var/www/frq;
+
     # Fallback to default language if no preference defined by browser
 	if ($accept_language ~ "^$") {
             set $accept_language "de";

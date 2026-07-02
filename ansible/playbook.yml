@@ -51,6 +51,21 @@
     cov_authenticator_password: samepasswordasinpostgrest
     cov_qgis_db_password: qgispassword
 
+    # coverage-website: the separate frontend repo, built and deployed
+    # alongside this backend. SSH remote (matches the existing checkout) —
+    # needs a deploy key / SSH access already set up on this host, or switch
+    # to the HTTPS form if the repo is public.
+    cov_website_repo: git@github.com:rtr-tkfreq/coverage-website.git
+    cov_website_version: master
+    cov_website_checkout_dir: /opt/coverage-website
+    cov_website_docroot: /var/www/frq
+    # https://github.com/nodesource/distributions — official upstream repo,
+    # not Debian's bundled Node (too old for this Angular CLI version: it
+    # requires Node ^20.19 || ^22.12 || ^24, and trixie's own nodejs package
+    # is 20.19.2, right at the edge — confirmed too old for `ng build` in
+    # practice, hence 22.x here rather than relying on Debian's).
+    node_major: "22"
+
     postgresql_version: "17"
     # https://www.postgresql.org/download/linux/debian/
     postgresql_repo_suite: "{{ ansible_distribution_release }}-pgdg"
@@ -165,6 +180,80 @@
         state: started
         enabled: true
 
+    # --- coverage-website: build the frontend from source and deploy it ---
+
+    - name: Add NodeSource apt signing key
+      ansible.builtin.get_url:
+        url: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        dest: /etc/apt/keyrings/nodesource.asc
+        mode: "0644"
+
+    - name: Add NodeSource apt repository
+      ansible.builtin.deb822_repository:
+        name: nodesource
+        types: deb
+        uris: "https://deb.nodesource.com/node_{{ node_major }}.x"
+        suites: nodistro
+        components: main
+        signed_by: /etc/apt/keyrings/nodesource.asc
+        state: present
+
+    - name: Install Node.js and git
+      ansible.builtin.apt:
+        name:
+          - nodejs
+          - git
+        state: present
+        update_cache: true
+
+    - name: Clone/update coverage-website
+      ansible.builtin.git:
+        repo: "{{ cov_website_repo }}"
+        dest: "{{ cov_website_checkout_dir }}"
+        version: "{{ cov_website_version }}"
+      register: cov_website_checkout
+
+    - name: Check whether coverage-website has already been built
+      ansible.builtin.stat:
+        path: "{{ cov_website_checkout_dir }}/dist/frq-map"
+      register: cov_website_dist
+
+    # Only reinstall/rebuild when the checkout actually changed (new commit
+    # pulled) or nothing has been built yet — a full npm ci + ng build takes
+    # real time, no reason to pay for it on every playbook run otherwise.
+    - name: Install coverage-website npm dependencies
+      ansible.builtin.command:
+        cmd: npm ci
+        chdir: "{{ cov_website_checkout_dir }}"
+      when: cov_website_checkout.changed or not cov_website_dist.stat.exists
+
+    - name: Build coverage-website (production)
+      ansible.builtin.command:
+        cmd: npx ng build --configuration production
+        chdir: "{{ cov_website_checkout_dir }}"
+      when: cov_website_checkout.changed or not cov_website_dist.stat.exists
+
+    - name: Ensure coverage-website docroot exists
+      ansible.builtin.file:
+        path: "{{ cov_website_docroot }}"
+        state: directory
+        owner: root
+        group: www-data
+        mode: "0755"
+
+    - name: Deploy built coverage-website to the docroot
+      ansible.builtin.copy:
+        src: "{{ cov_website_checkout_dir }}/dist/frq-map/"
+        dest: "{{ cov_website_docroot }}/"
+        remote_src: true
+        owner: root
+        group: www-data
+      when: cov_website_checkout.changed or not cov_website_dist.stat.exists
+      # outputPath in coverage-website's angular.json is "dist/frq-map",
+      # containing one subdirectory per locale (de/, en/) directly — matches
+      # nginx/example.com's rewrite rule serving /de/ and /en/ as real
+      # subpaths, so this copies straight in with no extra nesting to strip.
+
     # --- PostgREST: not packaged for Debian, install the upstream static binary ---
 
     - name: Download PostgREST release
@@ -265,6 +354,20 @@
       # role already exists, as long as cov_qgis_db_password matches its
       # actual password.
 
+    - name: Ensure tile docroot parent exists with correct ownership
+      ansible.builtin.file:
+        path: /var/www/tiles
+        state: directory
+        owner: "{{ cov_run_user }}"
+        group: www-data
+        mode: "0775"
+      # ansible.builtin.file only applies owner/group/mode to the leaf
+      # directory of `path` — if /var/www/tiles didn't exist yet, it would
+      # get auto-created as an intermediate directory with default (likely
+      # root-owned) permissions, silently leaving it wrong even though
+      # cov_tile_docroot itself below ends up correct. Explicit, separate
+      # task for it so both levels are actually enforced every run.
+
     - name: Ensure tile docroot exists
       ansible.builtin.file:
         path: "{{ cov_tile_docroot }}"
@@ -272,6 +375,9 @@
         owner: "{{ cov_run_user }}"
         group: www-data
         mode: "0775"
+      # Re-applied (not just created-once) on every run, so if something
+      # external resets ownership on this directory later, re-running the
+      # playbook fixes it again.
 
     - name: Ensure PostgreSQL service is running
       ansible.builtin.systemd:
@@ -350,20 +456,14 @@
       # 6.6M-row table this is the difference between a render finishing and
       # one that looks hung.
 
-    - name: Seed a minimal cov_layer catalog on a fresh install (@all + TMA)
+    - name: Seed the cov_layer catalog on a fresh install
       ansible.builtin.command:
-        cmd: >-
-          psql -d {{ cov_db_name }} -c
-          "INSERT INTO cov_layer (code, reference, visible_name, is_default, sort_order)
-           VALUES ('@all', NULL, '@all', true, 0), ('TMA', 'F1/16', 'T-Mobile Austria GmbH', false, 1)
-           ON CONFLICT (code) DO NOTHING;
-           INSERT INTO cov_layer_source (layer, source, reference)
-           VALUES ('@all', 'TMA', 'F1/16'), ('TMA', 'TMA', 'F1/16') ON CONFLICT DO NOTHING;"
+        cmd: psql -d {{ cov_db_name }} -f {{ playbook_dir }}/../postgresql/seed_layers.sql
       become_user: "{{ cov_run_user }}"
       when: cov_init_schema | bool
-      # Every operator needs a self-referencing cov_layer_source row too —
-      # api.cov_layer() resolves every selection, including a plain
-      # single-operator one, through cov_layer_source (see README.md).
+      # Current real production layer set (7 operators + the "all
+      # operators" and "3600 MHz" combined layers + individual 3600 MHz
+      # aliases) — see postgresql/seed_layers.sql. Idempotent.
 
     - name: Deploy systemd units
       ansible.builtin.template:

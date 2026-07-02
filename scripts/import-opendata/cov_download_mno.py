@@ -498,11 +498,19 @@ def import_all(csv_dir: Path, names: list[str]) -> list[str]:
 # --------------------------------------------------------------------------- #
 
 def import_final_step() -> bool:
-    """Backfill geom for newly imported rows from the atraster lookup table."""
+    """Backfill geom for newly imported rows from the atraster lookup table.
+
+    Joins on atraster.cellcode, not atraster.id — the Statistik Austria
+    shapefile's actual current column (confirmed against production; `id`
+    doesn't exist there). Using the wrong column here doesn't error, it just
+    silently matches zero rows, leaving geom NULL for every newly imported
+    row — QGIS then renders "successfully" (fast, since there's nothing to
+    draw) but produces empty tiles.
+    """
     log("Import, update geom")
     sql = """
 BEGIN;
-update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.id=raster and cov_mno.geom is null;
+update cov_mno set geom=ST_transform(atraster.geom,3857) from atraster where atraster.cellcode=raster and cov_mno.geom is null;
 COMMIT;
 """
     return run_psql(sql).returncode == 0
