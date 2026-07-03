@@ -83,6 +83,12 @@ ZOOM_MAX = os.environ.get("COV_TILE_ZOOM_MAX", "14")
 DPI = os.environ.get("COV_TILE_DPI", "96")
 QUALITY = os.environ.get("COV_TILE_QUALITY", "75")  # JPG only, harmless for PNG
 
+# The connection every project's datasource uses (dbname='frq' host=127.0.0.1
+# port=5432 user='qgis'), for check_qgis_db_auth() below.
+QGIS_DB_HOST = os.environ.get("COV_QGIS_DB_HOST", "127.0.0.1")
+QGIS_DB_PORT = os.environ.get("COV_QGIS_DB_PORT", "5432")
+QGIS_DB_USER = os.environ.get("COV_QGIS_DB_USER", "qgis")
+
 QUIET_LEVEL = 0
 
 
@@ -191,6 +197,39 @@ def psql_scalar(sql: str, dbname: str = DB_NAME) -> Optional[str]:
         return None
     value = result.stdout.strip()
     return value or None
+
+
+def check_qgis_db_auth() -> bool:
+    """Verify the qgis role can actually authenticate and read cov_mno over
+
+    TCP with the exact connection every project's datasource uses
+    (dbname='frq' host=127.0.0.1 port=5432 user='qgis') — a completely
+    different auth path than this script's own DB helpers, which connect as
+    the postgres OS user over the local socket via peer auth and never touch
+    a password at all. If the qgis role's password (~postgres/.pgpass) is
+    wrong/stale, or a grant is missing, QGIS does NOT error: it just treats
+    the datasource as invalid and silently renders that layer empty,
+    producing a real, well-formed, exit-code-0 tile set with no actual
+    coverage data in it. Running this once up front turns that into a loud
+    failure before any rendering is attempted, instead of a silent one after.
+    """
+    conninfo = f"host={QGIS_DB_HOST} port={QGIS_DB_PORT} dbname={DB_NAME} user={QGIS_DB_USER}"
+    result = subprocess.run(
+        ["psql", conninfo, "-t", "-A", "-c", "SELECT 1 FROM cov_mno LIMIT 1;"],
+        capture_output=True, text=True,
+        env={**os.environ, "PGCONNECT_TIMEOUT": "5"},
+    )
+    if result.returncode != 0:
+        log_error(
+            f"qgis DB role check failed for {conninfo!r} — qgis_process would treat this "
+            f"as an invalid datasource and silently render empty tiles instead of erroring, "
+            f"so refusing to render.\n{result.stderr.strip()}\n"
+            f"Check /var/lib/postgresql/.pgpass has the qgis role's current real password "
+            f"(format: {QGIS_DB_HOST}:{QGIS_DB_PORT}:{DB_NAME}:{QGIS_DB_USER}:<password>), "
+            f"and that the qgis role has SELECT on cov_mno."
+        )
+        return False
+    return True
 
 
 def latest_unrendered_date(operator: str, reference: str, force: bool = False) -> Optional[str]:
@@ -564,6 +603,9 @@ def main(argv: Optional[list[str]] = None) -> int:
         parser.error("--force requires --target")
     if args.rfc_date and not args.target:
         parser.error("--rfc-date requires --target")
+
+    if not check_qgis_db_auth():
+        return 1
 
     if args.target:
         target = select_target(build_targets(), args.target)

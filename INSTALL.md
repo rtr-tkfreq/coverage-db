@@ -203,14 +203,28 @@ render finishing and one that looks hung.
 project's PostgreSQL layer connects via `host=127.0.0.1` (TCP), which
 `pg_hba.conf` requires `scram-sha-256` password auth for — unlike `psql`
 invoked directly by the `postgres` OS user, which authenticates over the
-local socket via peer auth and needs no password. Without this, `qgis_process`
-doesn't error — it hangs indefinitely on an invisible, headless credential
-dialog, which looks identical to a stuck render:
+local socket via peer auth and needs no password. If this file is missing
+entirely, `qgis_process` doesn't error — it hangs indefinitely on an
+invisible, headless credential dialog, which looks identical to a stuck
+render. If the file is *present but wrong* (e.g. `qgis`'s password was
+changed and this wasn't updated to match), it's worse: `qgis_process` exits
+0 having rendered a real, well-formed, completely empty tile set — QGIS
+treats a datasource it can't authenticate to as just an empty layer, not an
+error:
 
 ```bash
 echo "127.0.0.1:5432:frq:qgis:qgispassword" >> ~/.pgpass   # run as the postgres OS user
 chmod 600 ~/.pgpass
 ```
+
+Use the `qgis` role's *real* password here, not the `qgispassword` placeholder
+— it must match `cov_qgis_db_password` in `ansible/playbook.yml` (or whatever
+you set the role's password to, if you're not using ansible). Since a wrong
+password fails silently rather than loudly, `cov_render_tiles.py` checks this
+connection itself before rendering anything (`check_qgis_db_auth()`,
+connecting exactly as the project files do — `host=127.0.0.1 port=5432
+user=qgis`) and refuses to render at all if it can't authenticate or read
+`cov_mno`, instead of quietly producing empty tiles.
 
 `frq_scheme.sql` creates `cov_layer`/`cov_layer_source`/`cov_layer_obligation`
 (the layer catalog — see README.md) but doesn't seed them; a fresh install
