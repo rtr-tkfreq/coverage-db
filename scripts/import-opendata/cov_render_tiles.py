@@ -193,18 +193,47 @@ def psql_scalar(sql: str, dbname: str = DB_NAME) -> Optional[str]:
     return value or None
 
 
-def latest_unrendered_date(operator: str, reference: str) -> Optional[str]:
-    """Newest rfc_date present in cov_mno for (operator, reference) that has no tileurl row yet."""
+def latest_unrendered_date(operator: str, reference: str, force: bool = False) -> Optional[str]:
+    """The true latest rfc_date in cov_mno for (operator, reference), or None
+
+    if that exact date already has a tileurl row. Deliberately NOT "the
+    newest rfc_date not yet in tileurl" — cov_mno accumulates every
+    historical import and is never pruned, so with that logic a target with
+    years of never-individually-rendered history would render one
+    old/superseded date per run, walking backward through history, instead
+    of always jumping straight to what's actually current. Older dates than
+    the latest are irrelevant once a newer one exists. force=True (--force)
+    skips the "already published" check and always returns the latest date,
+    for re-rendering something that's already in tileurl (e.g. after fixing
+    a bug that produced bad tiles the first time).
+    """
     sql = f"""
         SELECT rfc_date FROM cov_mno
         WHERE operator = '{operator}' AND reference = '{reference}'
-          AND rfc_date NOT IN (
-              SELECT date::text FROM tileurl WHERE operator = '{operator}' AND reference = '{reference}'
-          )
         ORDER BY rfc_date DESC
         LIMIT 1;
     """
-    return psql_scalar(sql)
+    latest = psql_scalar(sql)
+    if latest is None:
+        return None
+    if not force and tileurl_has_date(operator, reference, latest):
+        return None
+    return latest
+
+
+def tileurl_has_date(operator: str, reference: str, rfc_date: str) -> bool:
+    """Whether tileurl already has a row for this exact (operator, reference, date).
+
+    Deliberately not "is this the newest tileurl date" — tileurl can hold a
+    newer date than cov_mno's own latest (e.g. leftover from an earlier debug
+    --force render), and that must not make an older-but-still-unpublished
+    date look already-done.
+    """
+    sql = f"""
+        SELECT 1 FROM tileurl
+        WHERE operator = '{operator}' AND reference = '{reference}' AND date = '{rfc_date}';
+    """
+    return psql_scalar(sql) is not None
 
 
 def latest_tileurl_date(operator: str, reference: str) -> Optional[str]:
@@ -218,18 +247,32 @@ def latest_tileurl_date(operator: str, reference: str) -> Optional[str]:
     return psql_scalar(sql)
 
 
-def pending_combined_date(target: "RenderTarget") -> Optional[str]:
+def rfc_date_exists(operator: str, reference: str, rfc_date: str) -> bool:
+    """Whether cov_mno actually has data for this exact (operator, reference, date).
+
+    Used to validate --rfc-date up front, so a typo'd or nonexistent date
+    fails with a clear message instead of quietly rendering an empty tile set.
+    """
+    sql = f"""
+        SELECT 1 FROM cov_mno
+        WHERE operator = '{operator}' AND reference = '{reference}' AND rfc_date = '{rfc_date}';
+    """
+    return psql_scalar(sql) is not None
+
+
+def pending_combined_date(target: "RenderTarget", force: bool = False) -> Optional[str]:
     """rfc_date a derived target should render for, or None if nothing changed.
 
     A derived target is up to date once its own tileurl entry's date matches
     the max date across all of its dependencies. Waits (returns None) until
-    every dependency has been rendered at least once.
+    every dependency has been rendered at least once. force=True (--force)
+    skips the "already up to date" check.
     """
     dep_dates = [latest_tileurl_date(op, ref) for op, ref in target.depends_on]
     if any(date is None for date in dep_dates):
         return None
     combined_date = max(dep_dates)
-    if latest_tileurl_date(target.operator, target.reference) == combined_date:
+    if not force and latest_tileurl_date(target.operator, target.reference) == combined_date:
         return None
     return combined_date
 
@@ -278,17 +321,24 @@ def build_targets() -> list[RenderTarget]:
 
 
 def register_tileurl(operator: str, reference: str, rfc_date: str, in_all: bool) -> bool:
-    """Insert a tileurl row. There is no `url` column — api.tileurl computes
+    """Register a tileurl row for this exact (operator, reference, date),
 
-    the URL from operator/reference/date (see deploy_tiles(), which must
-    write files to the matching physical path). in_all is still written for
-    consistency with the live tileurl table's shape, though nothing
+    replacing any existing one first. There is no `url` column — api.tileurl
+    computes the URL from operator/reference/date (see deploy_tiles(), which
+    must write files to the matching physical path). in_all is still written
+    for consistency with the live tileurl table's shape, though nothing
     currently reads it — api.cov_layer()/api.layer_tileurl() resolve via
     cov_layer_source instead.
+
+    Delete-then-insert rather than plain insert: tileurl has no unique
+    constraint on (operator, reference, date), so re-registering the same
+    date (e.g. a --force re-render after fixing a bug that produced bad
+    tiles) would otherwise leave a duplicate row instead of replacing it.
     """
     ref_sql = f"'{reference}'" if reference else "NULL"
     sql = f"""
 BEGIN;
+DELETE FROM tileurl WHERE operator = '{operator}' AND reference {'= ' + ref_sql if reference else 'IS NULL'} AND date = '{rfc_date}';
 INSERT INTO tileurl(operator, reference, date, in_all)
 VALUES ('{operator}', {ref_sql}, '{rfc_date}', {str(in_all).lower()});
 COMMIT;
@@ -300,20 +350,54 @@ COMMIT;
 # Render + deploy
 # --------------------------------------------------------------------------- #
 
-def render_tiles(target: RenderTarget, rfc_date: str, workdir: Path) -> Optional[Path]:
-    """Run qgis_process directly against the project as-is.
+def pinned_date_project(target: RenderTarget, rfc_date: str, workdir: Path) -> Optional[Path]:
+    """A temp copy of target.project_path with its self-updating
 
-    Project SQL selects `rfc_date = (SELECT MAX(rfc_date) FROM ...)` itself, so
-    it always reflects current data — no per-run file patching needed. `rfc_date`
-    here is only used for naming the output directory / tileurl row.
+    `rfc_date=(select max(rfc_date) from cov_mno where operator=... and
+    reference=...)` subquery replaced by a literal date, for --rfc-date —
+    rendering a specific historic date instead of whatever is currently
+    latest. Only called for leaf targets (see process_target): a combined
+    project has one such subquery per dependency, each with its own
+    independent date history, so there's no single date to pin there.
+    Returns None (after logging) if the expected subquery text isn't found,
+    e.g. a project file that doesn't follow the generated leaf-project
+    pattern.
+    """
+    pattern = (f"rfc_date=(select max(rfc_date) from cov_mno "
+               f"where operator='{target.operator}' and reference='{target.reference}')")
+    replacement = f"rfc_date='{rfc_date}'"
+    content = target.project_path.read_text()
+    if pattern not in content:
+        log_error(f"  can't pin rfc_date: expected subquery not found in {target.project_path}: "
+                  f"{pattern}")
+        return None
+    patched_path = workdir / target.project_path.name
+    patched_path.write_text(content.replace(pattern, replacement))
+    return patched_path
+
+
+def render_tiles(target: RenderTarget, rfc_date: str, workdir: Path, pin_date: bool = False) -> Optional[Path]:
+    """Run qgis_process against the project — as-is, or with rfc_date pinned.
+
+    Project SQL normally selects `rfc_date = (SELECT MAX(rfc_date) FROM ...)`
+    itself, so it always reflects current data with no per-run file patching
+    needed. pin_date=True (--rfc-date) is the deliberate exception: it patches
+    a temp copy to render one specific historic date instead. Either way,
+    `rfc_date` is also used for naming the output directory / tileurl row.
     """
     tiles_dir = workdir / "tiles"
+
+    project_path = target.project_path
+    if pin_date:
+        project_path = pinned_date_project(target, rfc_date, workdir)
+        if project_path is None:
+            return None
 
     env = os.environ.copy()
     env["QT_QPA_PLATFORM"] = "offscreen"
     cmd = [
         "qgis_process", "run", "native:tilesxyzdirectory",
-        f"--project_path={target.project_path}",
+        f"--project_path={project_path}",
         "--",
         f"EXTENT={EXTENT}",
         f"ZOOM_MIN={ZOOM_MIN}",
@@ -356,29 +440,42 @@ def deploy_tiles(tiles_dir: Path, operator: str, reference: str, rfc_date: str) 
     return f"/cov/{op_slug}/{ref_slug}/{rfc_date}"
 
 
-def process_target(target: RenderTarget) -> bool:
+def process_target(target: RenderTarget, force: bool = False, pin_date: Optional[str] = None) -> bool:
     log(f"--- {target.operator} {target.reference} ---")
 
     if not target.project_path.is_file():
         log_error(f"  no project template at {target.project_path}")
         return False
 
-    if target.is_combined:
+    if pin_date:
+        # --rfc-date: render this exact historic date, regardless of what's
+        # already published — e.g. re-filling tiles that came out partly
+        # missing for an older date still in cov_mno.
+        if target.is_combined:
+            log_error(f"  --rfc-date isn't supported for combined targets ({target.operator}) — "
+                      f"each dependency has its own independent rfc_date history, so there's no "
+                      f"single date to pin. Target the specific leaf operator instead.")
+            return False
+        if not rfc_date_exists(target.operator, target.reference, pin_date):
+            log_error(f"  no cov_mno data for {target.operator} {target.reference} on {pin_date}")
+            return False
+        rfc_date = pin_date
+    elif target.is_combined:
         if not target.depends_on:
             log_error(f"  {target.operator} is a combined target but cov_layer_source has no "
                       f"rows for it — check `SELECT * FROM cov_layer_source WHERE layer = "
                       f"'{target.operator}';` on the database. Not rendering (would otherwise "
                       f"silently do nothing every run).")
             return False
-        rfc_date = pending_combined_date(target)
+        rfc_date = pending_combined_date(target, force=force)
     else:
-        rfc_date = latest_unrendered_date(target.operator, target.reference)
+        rfc_date = latest_unrendered_date(target.operator, target.reference, force=force)
     if not rfc_date:
         log("  nothing new to render")
         return True
 
     with tempfile.TemporaryDirectory(prefix="cov_render_") as tmp:
-        tiles_dir = render_tiles(target, rfc_date, Path(tmp))
+        tiles_dir = render_tiles(target, rfc_date, Path(tmp), pin_date=bool(pin_date))
         if tiles_dir is None:
             return False
 
@@ -443,16 +540,36 @@ def main(argv: Optional[list[str]] = None) -> int:
              "/var/www/tiles/cov) — for debug renders you don't want to publish live, "
              "e.g. to avoid overwriting a real render while testing.",
     )
+    parser.add_argument(
+        "--force", action="store_true",
+        help="re-render the latest rfc_date even if it already has a tileurl row — e.g. "
+             "after fixing a bug that produced bad tiles the first time. Only valid with "
+             "--target: forcing a full unattended run to always re-render everything would "
+             "turn a normally-idle scheduled job into an hours-long one every time.",
+    )
+    parser.add_argument(
+        "--rfc-date", metavar="DATE",
+        help="render this exact historic rfc_date instead of the latest one — for filling in "
+             "tiles that came out missing/incomplete for an older date that's still in cov_mno. "
+             "Always renders and replaces any existing tileurl row for that date, regardless of "
+             "--force. Only valid with --target on a single leaf operator (not a combined layer "
+             "like all3600mhz, since each of its dependencies has its own independent date "
+             "history — there's no single date to pin there).",
+    )
     args = parser.parse_args(argv)
     QUIET_LEVEL = args.quiet
     if args.output_dir:
         TILE_DOCROOT = Path(args.output_dir)
+    if args.force and not args.target:
+        parser.error("--force requires --target")
+    if args.rfc_date and not args.target:
+        parser.error("--rfc-date requires --target")
 
     if args.target:
         target = select_target(build_targets(), args.target)
         if target is None:
             return 1
-        return 0 if process_target(target) else 1
+        return 0 if process_target(target, force=args.force, pin_date=args.rfc_date) else 1
 
     lock_fd = open(LOCK_FILE, "w")
     try:

@@ -420,6 +420,34 @@ comparing against:
 su postgres -c '/opt/coverage-db/scripts/import-opendata/cov_render_tiles.py --target all3600mhz --output-dir /tmp/debug-tiles'
 ```
 
+Both `--target` and a full run only render a target's *latest* rfc_date, and
+only if that exact date doesn't already have a `tileurl` row — once it's
+published, re-running does nothing (`nothing new to render`), even if you
+know the tiles themselves are wrong (e.g. after fixing a rendering bug). To
+force a re-render of the latest date regardless, add `--force` (requires
+`--target` — forcing an entire unattended scan to always re-render
+everything would turn a normally-idle scheduled job into an hours-long one
+on every run):
+
+```bash
+su postgres -c '/opt/coverage-db/scripts/import-opendata/cov_render_tiles.py --target SBG:F7/16 --force'
+```
+
+`--force` still only re-renders the *latest* date. If `cov_mno` holds multiple
+historic `rfc_date`s for an operator and an older one's tiles came out
+missing/incomplete (e.g. a render was interrupted before `tileurl` was
+updated), render that exact date with `--rfc-date DATE` — also requires
+`--target`, and only works on a single leaf operator, not a combined layer
+like `all3600mhz` (each of its dependencies has its own independent date
+history, so there's no single date to pin for the combined project). This
+temporarily patches a copy of the project file's self-updating
+`MAX(rfc_date)` subquery to the literal date for that one render; the
+original project file on disk is untouched:
+
+```bash
+su postgres -c '/opt/coverage-db/scripts/import-opendata/cov_render_tiles.py --target SBG:F7/16 --rfc-date 2025-11-20'
+```
+
 ## Notes
 
 - If an operator's site blocks this host's IP, `cov_download_mno.py` supports

@@ -144,7 +144,8 @@ parse, no `null` standing in for a magic string.
    — nothing to render, it reuses the leaf's own tiles (see step 5).
 4. When there is unrendered data, it runs `qgis_process` headlessly against
    that target's project (whose SQL always selects `MAX(rfc_date)` itself,
-   so no per-run file patching is needed), moves the tiles under
+   so normally no per-run file patching is needed — `--rfc-date` below is
+   the deliberate exception), moves the tiles under
    `/var/www/tiles/cov/<OPERATOR-OR-CODE>/<REFERENCE>/<DATE>/`, and inserts
    the corresponding `tileurl` row.
 5. From that point on, nginx serves the new tiles directly as static files.
@@ -177,6 +178,22 @@ No manual trigger, no coordination between the two jobs is required — the
 render job's "is there unrendered data" check *is* the hand-off between them.
 Both are also runnable by hand at any time (e.g. `./cov_download_mno.py`,
 `./cov_render_tiles.py`) for one-off imports or re-renders.
+
+`cov_render_tiles.py` also has a few flags for manual/debug use — see
+[INSTALL.md](INSTALL.md)'s verification section for full examples:
+
+* `--target OPERATOR[:REFERENCE]` — render just one target instead of the
+  full scan (e.g. `--target SBG`, `--target TMA:F7/16`, or a combined
+  target's own code like `--target all3600mhz`).
+* `--force` — re-render the latest `rfc_date` even though it's already
+  published (requires `--target`).
+* `--rfc-date DATE` — render one specific historic `rfc_date` instead of the
+  latest, for filling in tiles that came out missing/incomplete for an older
+  date still in `cov_mno` (requires `--target` on a single leaf operator,
+  not a combined layer — each dependency has its own independent date
+  history, so there's no single date to pin for those).
+* `--output-dir PATH` — write tiles somewhere other than the real tile
+  docroot, so a debug render doesn't overwrite a live one.
 
 See `ansible/playbook.yml` for the exact systemd unit definitions this sets up.
 
