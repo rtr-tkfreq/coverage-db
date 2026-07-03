@@ -34,13 +34,17 @@ is skipped entirely. Only genuinely new/changed files get imported — unless
 --keep-duplicates is given, in which case every file is kept and (re-)imported,
 relying on the database to reject rows with an already-known rfc_date.
 
-A cleaned file with fewer than MIN_DATA_ROWS data rows is treated as a failed
-download rather than imported — an operator's site returning an error page, a
-truncated transfer, or an empty export all produce a technically-valid but
-near-empty CSV, and importing that would give that operator's latest rfc_date
-almost no real coverage data (the same "renders fine, produces empty tiles"
-failure mode as bad rfc_date/geom data, just introduced at import time instead
-of render time).
+Before importing, individual rows with an invalid rfc_date are dropped: it must
+be a real calendar date, strictly formatted YYYY-MM-DD (not e.g. "2026-3-2" —
+rfc_date is a varchar, so an unpadded value sorts wrong in any MAX(rfc_date)
+query even though it's a real date), and within RFC_DATE_MIN_YEAR..
+RFC_DATE_MAX_YEAR. A cleaned file with fewer than MIN_DATA_ROWS data rows
+left after that is treated as a failed download rather than imported — an
+operator's site returning an error page, a truncated transfer, or an empty
+export all produce a technically-valid but near-empty CSV, and importing
+that would give that operator's latest rfc_date almost no real coverage data
+(the same "renders fine, produces empty tiles" failure mode as bad
+rfc_date/geom data, just introduced at import time instead of render time).
 
 Replaces the previous cov_download_mno.sh, cov_import_mno.sh, cov_import_all.sh and
 cov_import_final_step.sh.
@@ -58,7 +62,7 @@ import subprocess
 import sys
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Callable, Optional
 from urllib.error import HTTPError, URLError
@@ -93,6 +97,9 @@ MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterda
 DB_NAME = "frq"
 RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
 MIN_DATA_ROWS = 10  # a cleaned file with fewer data rows than this is discarded, not imported
+RFC_DATE_RE = re.compile(rb"^\d{4}-\d{2}-\d{2}$")  # strict RFC 3339 date-only, zero-padded
+RFC_DATE_MIN_YEAR = 2020
+RFC_DATE_MAX_YEAR = 2050
 
 # Set by main() from -q/--quiet (repeatable: -q, -qq). 0 = normal, 1 = routine
 # progress output suppressed, 2 = failure/warning details suppressed too (exit
@@ -295,6 +302,54 @@ def _data_row_count(data: bytes) -> int:
     return max(len(non_empty) - 1, 0)
 
 
+def _valid_rfc_date(value: bytes) -> bool:
+    """Whether `value` is a real calendar date, strictly in YYYY-MM-DD form,
+
+    within RFC_DATE_MIN_YEAR..RFC_DATE_MAX_YEAR. Deliberately format-strict,
+    not just "is this parseable as a date": a value like "2026-3-2" (missing
+    the leading zeros) IS a real date, but rfc_date is stored and compared as
+    a plain varchar, so an unpadded value silently breaks every
+    MAX(rfc_date)-based query (a string comparison, not a chronological one)
+    — it can sort *after* correctly-formatted later dates and get treated as
+    "the latest", which is exactly what happened with a real "2026-03-2" row
+    in production. The year range catches other garbage (wrong field order,
+    OCR/typo years, etc.) that still happens to match the YYYY-MM-DD shape.
+    """
+    if not RFC_DATE_RE.match(value):
+        return False
+    year, month, day = (int(part) for part in value.split(b"-"))
+    if not (RFC_DATE_MIN_YEAR <= year <= RFC_DATE_MAX_YEAR):
+        return False
+    try:
+        date(year, month, day)
+    except ValueError:
+        return False
+    return True
+
+
+def _drop_invalid_rfc_dates(data: bytes) -> tuple[bytes, int]:
+    """Remove data rows whose rfc_date field (format: operator;reference;
+
+    license;rfc_date;...) fails _valid_rfc_date. Returns the filtered data
+    and how many rows were dropped, so the caller can log it. A handful of
+    bad rows shouldn't discard an otherwise-good file with hundreds of
+    thousands of rows — MIN_DATA_ROWS below still catches the case where
+    filtering leaves too little (or nothing) usable.
+    """
+    header, *rows = data.split(b"\n")
+    kept = []
+    dropped = 0
+    for row in rows:
+        if not row.strip():
+            continue
+        fields = row.split(b";")
+        if len(fields) < 4 or not _valid_rfc_date(fields[3]):
+            dropped += 1
+            continue
+        kept.append(row)
+    return header + b"\n" + b"\n".join(kept), dropped
+
+
 # --------------------------------------------------------------------------- #
 # Per-operator fetch
 # --------------------------------------------------------------------------- #
@@ -378,6 +433,11 @@ def download_all(out_dir: Path) -> list[str]:
             continue
 
         data = _strip_bom(data)
+
+        data, dropped_dates = _drop_invalid_rfc_dates(data)
+        if dropped_dates:
+            log_error(f"    discarded {dropped_dates} row(s) with an invalid/out-of-range "
+                      f"rfc_date (must be YYYY-MM-DD, {RFC_DATE_MIN_YEAR}-{RFC_DATE_MAX_YEAR})")
 
         row_count = _data_row_count(data)
         if row_count < MIN_DATA_ROWS:
