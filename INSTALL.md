@@ -226,6 +226,16 @@ connecting exactly as the project files do — `host=127.0.0.1 port=5432
 user=qgis`) and refuses to render at all if it can't authenticate or read
 `cov_mno`, instead of quietly producing empty tiles.
 
+Before even attempting that connection, `check_pgpass()` verifies `.pgpass`
+itself: that it exists, is owned by the OS user running the script, and is
+exactly mode `0600`. `libpq` silently *ignores* a `.pgpass` with any
+group/world access (the same way it ignores one that's missing or wrong),
+falling back to an interactive password prompt — harmless-looking if you're
+at a terminal, but indistinguishable from a hang if run via cron/systemd.
+This check turns that specific failure mode into the same clear, immediate
+error as a missing file, and the DB connection check itself always runs with
+stdin closed so it can never sit waiting on a prompt either way.
+
 `frq_scheme.sql` creates `cov_layer`/`cov_layer_source`/`cov_layer_obligation`
 (the layer catalog — see README.md) but doesn't seed them; a fresh install
 has no selectable layers until you add some:

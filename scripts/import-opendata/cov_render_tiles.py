@@ -64,6 +64,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -199,6 +200,41 @@ def psql_scalar(sql: str, dbname: str = DB_NAME) -> Optional[str]:
     return value or None
 
 
+def check_pgpass() -> bool:
+    """Verify .pgpass exists, is owned by the current user, and is mode 0600.
+
+    libpq silently ignores a .pgpass file with any group/world access
+    instead of erroring — it just falls back to an interactive password
+    prompt, which is indistinguishable from a missing file and, run
+    non-interactively (cron/systemd), just hangs forever. Checking this
+    ourselves first turns a wrong-permissions file into the same loud,
+    specific failure as a missing one, instead of a silent hang/prompt three
+    layers away in qgis_process. PGPASSFILE overrides the default path, same
+    as libpq itself respects.
+    """
+    pgpass_path = Path(os.environ.get("PGPASSFILE", str(Path.home() / ".pgpass")))
+    if not pgpass_path.is_file():
+        log_error(f"no .pgpass at {pgpass_path} — needed for the qgis role's TCP password auth "
+                  f"(one line, format: {QGIS_DB_HOST}:{QGIS_DB_PORT}:{DB_NAME}:{QGIS_DB_USER}:"
+                  f"<password>).")
+        return False
+
+    st = pgpass_path.stat()
+    if st.st_uid != os.geteuid():
+        log_error(f"{pgpass_path} is owned by uid {st.st_uid}, not this process's uid "
+                  f"({os.geteuid()}) — libpq won't trust it like that. `chown` it to the user "
+                  f"running this script.")
+        return False
+    mode = stat.S_IMODE(st.st_mode)
+    if mode & 0o077:
+        log_error(f"{pgpass_path} has mode {oct(mode)}, which grants group/world access — "
+                  f"libpq silently ignores a .pgpass file in that state (falls back to an "
+                  f"interactive password prompt) instead of erroring. Fix with "
+                  f"`chmod 600 {pgpass_path}`.")
+        return False
+    return True
+
+
 def check_qgis_db_auth() -> bool:
     """Verify the qgis role can actually authenticate and read cov_mno over
 
@@ -213,10 +249,13 @@ def check_qgis_db_auth() -> bool:
     coverage data in it. Running this once up front turns that into a loud
     failure before any rendering is attempted, instead of a silent one after.
     """
+    if not check_pgpass():
+        return False
+
     conninfo = f"host={QGIS_DB_HOST} port={QGIS_DB_PORT} dbname={DB_NAME} user={QGIS_DB_USER}"
     result = subprocess.run(
         ["psql", conninfo, "-t", "-A", "-c", "SELECT 1 FROM cov_mno LIMIT 1;"],
-        capture_output=True, text=True,
+        capture_output=True, text=True, stdin=subprocess.DEVNULL,
         env={**os.environ, "PGCONNECT_TIMEOUT": "5"},
     )
     if result.returncode != 0:
