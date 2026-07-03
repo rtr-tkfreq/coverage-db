@@ -34,6 +34,14 @@ is skipped entirely. Only genuinely new/changed files get imported — unless
 --keep-duplicates is given, in which case every file is kept and (re-)imported,
 relying on the database to reject rows with an already-known rfc_date.
 
+A cleaned file with fewer than MIN_DATA_ROWS data rows is treated as a failed
+download rather than imported — an operator's site returning an error page, a
+truncated transfer, or an empty export all produce a technically-valid but
+near-empty CSV, and importing that would give that operator's latest rfc_date
+almost no real coverage data (the same "renders fine, produces empty tiles"
+failure mode as bad rfc_date/geom data, just introduced at import time instead
+of render time).
+
 Replaces the previous cov_download_mno.sh, cov_import_mno.sh, cov_import_all.sh and
 cov_import_final_step.sh.
 """
@@ -84,6 +92,7 @@ MASS_URL = "https://www.massresponse.com/versorgungsdaten3-5ghz/OpenDataRasterda
 
 DB_NAME = "frq"
 RUN_DIR_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}$")
+MIN_DATA_ROWS = 10  # a cleaned file with fewer data rows than this is discarded, not imported
 
 # Set by main() from -q/--quiet (repeatable: -q, -qq). 0 = normal, 1 = routine
 # progress output suppressed, 2 = failure/warning details suppressed too (exit
@@ -280,6 +289,12 @@ def _normalize_delimiter(data: bytes) -> bytes:
     return data
 
 
+def _data_row_count(data: bytes) -> int:
+    """Non-empty lines in `data`, minus the header — assumes a header is always present."""
+    non_empty = [line for line in data.split(b"\n") if line.strip()]
+    return max(len(non_empty) - 1, 0)
+
+
 # --------------------------------------------------------------------------- #
 # Per-operator fetch
 # --------------------------------------------------------------------------- #
@@ -363,6 +378,14 @@ def download_all(out_dir: Path) -> list[str]:
             continue
 
         data = _strip_bom(data)
+
+        row_count = _data_row_count(data)
+        if row_count < MIN_DATA_ROWS:
+            log_error(f"    FAILED: only {row_count} data row(s) (minimum {MIN_DATA_ROWS}) — "
+                      f"looks like a broken/incomplete download, discarding (raw response kept "
+                      f"at {job.name}.csv.raw for inspection)")
+            failures.append(job.name)
+            continue
 
         out_path = out_dir / f"{job.name}.csv"
         out_path.write_bytes(data)
