@@ -19,9 +19,8 @@ be found in a separate repository at
   called. See "The layer catalog" below.
 * **`cov_download_mno.py`** (`scripts/import-opendata/`) — downloads each
   operator's open-data CSV, compares it against previous runs, discards
-  anything unchanged (operators publish updates roughly every 3 months, so
-  most runs see nothing new), and imports what's left into `cov_mno`. Runs in
-  minutes.
+  anything unchanged (operators publish updates every 3 months,
+  and imports what's left into `cov_mno`. Runs in minutes.
 * **`cov_render_tiles.py`** (`scripts/import-opendata/`) — turns new
   `cov_mno` data into map tiles: renders XYZ tiles via headless QGIS, moves
   them into the tile docroot, and registers the result in `tileurl`. Can run
@@ -42,9 +41,9 @@ be found in a separate repository at
 
 ## The layer catalog
 
-Every selectable thing on the map — a real operator's coverage, or a layer
+Every selectable thing on the map — an operator's coverage, or a layer
 combining several operators — is a row in `cov_layer`. There's no separate
-concept for "real" vs. "combined": a combined layer is just a `cov_layer` row
+concept for single vs. combined: a combined layer is just a `cov_layer` row
 that also has rows in `cov_layer_source` pointing at the layers it's built
 from.
 
@@ -103,20 +102,17 @@ operator-and-date-specific obligations (`kg`, one dated tile set per
 operator, with `@all`'s row overlaying every operator's own tile set at
 once), and static reference overlays with no operator- or date-specificity
 at all (`roads_bl`/`cities`/`motorways`/`railways` — same `source` on every
-layer's row; currently stored once per layer, matching how the old JSON
-represented it, not deduplicated into a single shared row).
+layer's row; currently stored once per layer.
 
 `label_de`/`label_en` are real backend-owned display text, not placeholders —
 the frontend reads them directly (via Angular's `LOCALE_ID`, since this app
 is compiled once per locale rather than switching language at runtime; see
 `frqmap.component.ts`) instead of hardcoding its own translation per
-obligation `type`, which is what it did before this change and which had
-already drifted from the backend's actual wording in a few cases.
+obligation `type`.
 
 The frontend reads `api.layers` (ordered by `sort_order`) to build its
 operator selector, and `api.layer_obligations` for the obligation overlay
-dropdown and its labels — both flat, ordinary REST resources; no JSON blob to
-parse, no `null` standing in for a magic string.
+dropdown and its labels — both flat REST resources;
 
 ## How data flows from "operator publishes an update" to "map shows it"
 
@@ -220,5 +216,5 @@ playbook or a systemd timer does automatically against a live database.
 
 ## License
 
-Copyright 2022 Rundfunk und Telekom Regulierungs-GmbH (RTR-GmbH). This source code is licensed under the Apache license found in the LICENSE.txt file. The documentation to the project is licensed under the CC BY 4.0 license.
-Trademarks and logos of RTR, TKK,  and PCK are not part of this license.
+Copyright 2022-2026 Rundfunk und Telekom Regulierungs-GmbH (RTR-GmbH). This source code is licensed under the Apache license found in the LICENSE.txt file. The documentation to the project is licensed under the CC BY 4.0 license.
+Trademarks and logos of RTR, TKK, and PCK are not part of this license.
