@@ -19,8 +19,10 @@ be found in a separate repository at
   called. See "The layer catalog" below.
 * **`cov_download_mno.py`** (`scripts/import-opendata/`) — downloads each
   operator's open-data CSV, compares it against previous runs, discards
-  anything unchanged (operators publish updates every 3 months,
-  and imports what's left into `cov_mno`. Runs in minutes.
+  anything unchanged (operators publish updates every 3 months, so most runs
+  see nothing new) or suspiciously small (fewer than 10 data rows — treated
+  as a broken/incomplete download, not imported), and imports what's left
+  into `cov_mno`. Runs in minutes.
 * **`cov_render_tiles.py`** (`scripts/import-opendata/`) — turns new
   `cov_mno` data into map tiles: renders XYZ tiles via headless QGIS, moves
   them into the tile docroot, and registers the result in `tileurl`. Can run
@@ -33,8 +35,8 @@ be found in a separate repository at
   Tools → Generate XYZ Tiles (Directory)" — same algorithm, just scripted.
 * **PostgREST** — exposes a REST API (schema `api`) over the database:
   `layers`, `layer_obligations`, `tileurl` (which tile set is current for a
-  given layer), and the `cov()` lookup function the frontend uses for point
-  queries.
+  given layer), and the `cov_layer()` lookup function the frontend uses for
+  point queries.
 * **nginx** — serves the rendered tiles as static files from
   `/var/www/tiles`, and reverse-proxies the PostgREST API and the basemap.at
   background map.
@@ -57,11 +59,11 @@ from.
  H3A   | F1/16     | Hutchison Drei Austria  | f          | 3
 
 -- cov_layer_source: which layers a combined layer is built from
- layer | source
--------+--------
- @all  | TMA
- @all  | A1TA
- @all  | H3A
+ layer | source | reference
+-------+--------+-----------
+ @all  | TMA    | F1/16
+ @all  | A1TA   | F1/16
+ @all  | H3A    | F1/16
 ```
 
 A layer with no rows in `cov_layer_source` (as `layer`) is a leaf — rendered
@@ -95,7 +97,7 @@ obligated to cover, and by when") are a second kind of overlay, tracked in
  @all  | kg        | Katastralgemeinden  | Cadastral communities   | {/obligations/kg/A1TA/..., /obligations/kg/H3A/..., /obligations/kg/TMA/...}
 ```
 
-`source` holds XYZ tile directory paths, same shape as `tileurl.url` — an
+`source` holds XYZ tile directory paths, same shape as `api.tileurl.url` — an
 obligation overlay is rendered and served exactly like a coverage layer, just
 from a different docroot subtree. Two different things share this table:
 operator-and-date-specific obligations (`kg`, one dated tile set per
@@ -216,5 +218,5 @@ playbook or a systemd timer does automatically against a live database.
 
 ## License
 
-Copyright 2022-2026 Rundfunk und Telekom Regulierungs-GmbH (RTR-GmbH). This source code is licensed under the Apache license found in the LICENSE.txt file. The documentation to the project is licensed under the CC BY 4.0 license.
+Copyright 2021-2026 Rundfunk und Telekom Regulierungs-GmbH (RTR-GmbH). This source code is licensed under the Apache license found in the LICENSE file. The documentation to the project is licensed under the CC BY 4.0 license.
 Trademarks and logos of RTR, TKK, and PCK are not part of this license.
