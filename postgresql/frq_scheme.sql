@@ -194,12 +194,14 @@ ALTER VIEW api.layer_obligations OWNER TO postgres;
 --
 -- cov_mno is never pruned — it accumulates every historical rfc_date an
 -- operator has ever published for a raster cell, not just the current one.
--- current_tileurl pins each (operator, reference) to its most recently
--- published date (from tileurl, which is similarly append-only) so this
--- only ever returns the data matching what's currently rendered as a tile
--- overlay, not the full history.
+-- current_tileurl pins each (operator, reference) to a specific published
+-- date (from tileurl, which is similarly append-only): cov_date if given,
+-- else the true latest. cov_date exists so a point clicked while the
+-- frontend's date selector (see api.layer_tileurl) has an older date
+-- selected shows that same date's data — not always today's latest,
+-- regardless of what's actually on screen.
 
-CREATE FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
+CREATE FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying, cov_date date DEFAULT NULL) RETURNS TABLE(operator character varying, reference character varying, license character varying, last_updated character varying, raster character varying, technology character varying, downloadkbitmax integer, uploadkbitmax integer, downloadkbitnormal integer, uploadkbitnormal integer, geojson text, centroid_x double precision, centroid_y double precision)
     LANGUAGE plpgsql
     AS $_$
 BEGIN
@@ -212,9 +214,18 @@ BEGIN
        -- api.tileurl (the view), not the base table: views run with their
        -- owner's privileges, so this needs no extra grant to web_anon —
        -- same trick production's existing api.cov() overloads already use.
-       SELECT tu.operator, tu.reference, max(tu.date) AS date
+       -- Per (operator, reference): the latest date at or before cov_date,
+       -- or the true latest if cov_date is NULL. A combined layer's
+       -- dependencies each have their own independent date history, so
+       -- "at or before" (not an exact match) is what lets every dependency
+       -- still show its own most-recent-as-of-then data instead of some
+       -- dependencies going blank just because their own history doesn't
+       -- happen to have that exact date.
+       SELECT DISTINCT ON (tu.operator, tu.reference)
+              tu.operator, tu.reference, tu.date
          FROM api.tileurl tu
-        GROUP BY tu.operator, tu.reference
+        WHERE cov_date IS NULL OR tu.date <= cov_date
+        ORDER BY tu.operator, tu.reference, tu.date DESC
    )
    SELECT
           m.operator::VARCHAR,
@@ -239,7 +250,7 @@ END;
 $_$;
 
 
-ALTER FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying) OWNER TO postgres;
+ALTER FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double precision, cov_layer character varying, cov_date date) OWNER TO postgres;
 
 --
 -- Name: layer_tileurl(character varying); Type: FUNCTION; Schema: api; Owner: postgres
@@ -258,6 +269,13 @@ ALTER FUNCTION api.cov_layer(cov_longitude double precision, cov_latitude double
 --      at TMA's F7/16 data: no separate render exists or is needed, this
 --      just resolves straight to that source's own tiles via
 --      cov_layer_source.
+--
+-- Returns every published date for the resolved layer, not just the latest
+-- — tileurl accumulates one row per date a target has ever been rendered
+-- for (old dates' tiles are never deleted), so the frontend can offer a
+-- date selector instead of always showing only the newest. Ordered newest
+-- first so the frontend's default selection (index 0) is always the
+-- latest date, matching the pre-selector behavior.
 
 CREATE FUNCTION api.layer_tileurl(cov_layer character varying) RETURNS TABLE(operator character varying, reference character varying, date date, url character varying)
     LANGUAGE sql STABLE
@@ -269,8 +287,7 @@ CREATE FUNCTION api.layer_tileurl(cov_layer character varying) RETURNS TABLE(ope
       JOIN api.tileurl t ON t.operator = cls.source AND t.reference = cls.reference
      WHERE cls.layer = cov_layer
        AND NOT EXISTS (SELECT 1 FROM api.tileurl WHERE operator = cov_layer)
-    ORDER BY date DESC
-    LIMIT 1;
+    ORDER BY date DESC;
 $$;
 
 
@@ -675,10 +692,10 @@ GRANT SELECT ON TABLE api.layers TO web_anon;
 GRANT SELECT ON TABLE api.layer_obligations TO web_anon;
 
 --
--- Name: FUNCTION cov_layer(double precision, double precision, character varying); Type: ACL; Schema: api; Owner: postgres
+-- Name: FUNCTION cov_layer(double precision, double precision, character varying, date); Type: ACL; Schema: api; Owner: postgres
 --
 
-GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying) TO web_anon;
+GRANT EXECUTE ON FUNCTION api.cov_layer(double precision, double precision, character varying, date) TO web_anon;
 
 --
 -- Name: FUNCTION layer_tileurl(character varying); Type: ACL; Schema: api; Owner: postgres
