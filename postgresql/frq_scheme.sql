@@ -217,7 +217,7 @@ BEGIN
         GROUP BY tu.operator, tu.reference
    )
    SELECT
-          coalesce(vn.visible_name, m.operator)::VARCHAR AS operator,
+          m.operator::VARCHAR,
           m.reference::VARCHAR,
           m.license::VARCHAR,
           m.rfc_date::VARCHAR AS last_updated,
@@ -233,7 +233,6 @@ BEGIN
      FROM public.cov_mno m
      JOIN resolved r ON r.operator = m.operator AND r.reference = m.reference
      JOIN current_tileurl t ON t.operator = m.operator AND t.reference = m.reference AND t.date = m.rfc_date::date
-     LEFT JOIN public.cov_visible_name vn ON vn.operator = m.operator
     WHERE ST_intersects((ST_Transform(ST_SetSRID(ST_MakePoint(cov_longitude::FLOAT, cov_latitude::FLOAT), 4326), 3857)), m.geom)
     ORDER BY m.dl_normal DESC;
 END;
@@ -405,7 +404,12 @@ ALTER SEQUENCE public.cov_mno_uid_seq OWNED BY public.cov_mno.uid;
 -- internal rtr_kg table for obligation reporting) — that function isn't
 -- included here since it depends on several other internal-only tables not
 -- part of this public schema (rtr_j1, rtr_j6, rtr_id100, rtr_id250, vgd,
--- atraster250). The column itself is harmless to carry regardless.
+-- atraster250). visible_name (the short column) is NOT used by anything in
+-- this repo — api.cov_layer() used to coalesce() through it, but that broke
+-- the frontend's own operator-label lookup (which expects api.cov_layer()'s
+-- operator field to be the raw code, not a pre-resolved display name — see
+-- migrate_cov_visible_name.sql) and has been removed. Left in place (not
+-- dropped) since api.id(), which isn't in this repo, might still read it.
 CREATE TABLE public.cov_visible_name (
     uid integer NOT NULL,
     operator character varying(200),
